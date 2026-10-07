@@ -11,7 +11,7 @@
    "enviado" que não chegou. */
 importScripts('fila.js');
 
-var VERSAO_CACHE = 'operacao-teste-5';
+var VERSAO_CACHE = 'operacao-teste-6';
 var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 
 self.addEventListener('install', function (e) {
@@ -41,11 +41,35 @@ self.addEventListener('fetch', function (e) {
    por falta de rede, a promessa falha e o navegador tenta de novo mais tarde.
    É exatamente uma das coisas que o teste existe para medir: a coluna
    ENVIADO_POR da aba APP_TESTE diz "segundo plano" quando foi ele. */
+/* PACIÊNCIA DEPOIS DE ACORDAR (Dalton, 07/10/2026, 16:19). O Android acordou o
+   app às 16:14, um minuto depois do registro, e o envio falhou com "sem
+   conexão": o modo avião tinha acabado de sair, e a rede ainda não estava de
+   pé. A próxima tentativa do Chrome viria uns 5 minutos depois. Acordado, o
+   app espera e tenta de novo dentro da mesma vez (o Android dá alguns minutos
+   para a tarefa terminar), em vez de desistir na primeira. */
+var ESPERAS_SEM_REDE = [5000, 15000, 30000];
+
+function esperar(ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }
+
+function enviarComPaciencia(tentativa) {
+  return enviarFila('segundo plano').then(function (r) {
+    /* Também quando o celular diz "com sinal" e o servidor não responde: logo
+       depois de acordar, a rede pode estar meio de pé (ícone de sinal, sem
+       caminho ainda). Recusa do servidor (código errado, desligado) não entra
+       aqui: essa não melhora esperando. */
+    if (r && (r.semRede || r.servidorFora) && tentativa < ESPERAS_SEM_REDE.length)
+      return esperar(ESPERAS_SEM_REDE[tentativa]).then(function () { return enviarComPaciencia(tentativa + 1); });
+    if (r) r.tentativa = tentativa + 1;
+    return r;
+  });
+}
+
 self.addEventListener('sync', function (e) {
   if (e.tag !== 'enviar-fila') return;
-  e.waitUntil(enviarFila('segundo plano').then(function (r) {
+  e.waitUntil(enviarComPaciencia(0).then(function (r) {
+    var vez = r && r.tentativa > 1 ? ' (na ' + r.tentativa + 'ª tentativa)' : '';
     return anotarSegundoPlano(r && r.ocupado ? 'o app aberto já estava enviando'
-      : r && r.erro ? 'falhou: ' + r.erro : (r ? r.enviados : 0) + ' enviado(s)').then(function () {
+      : r && r.erro ? 'falhou: ' + r.erro + vez : (r ? r.enviados : 0) + ' enviado(s)' + vez).then(function () {
       if (r && (r.semRede || r.servidorFora)) throw new Error('sem rede: o navegador tenta de novo');
     });
   }, function (erro) {
