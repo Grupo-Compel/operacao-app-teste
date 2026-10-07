@@ -1,0 +1,16 @@
+{
+  "name": "Operação · Teste de campo",
+  "short_name": "Op. Teste",
+  "description": "App de teste da Operação: lançar sem sinal, foto, GPS, bússola e envio no Wi-Fi.",
+  "lang": "pt-BR",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f2a2e",
+  "theme_color": "#0f2a2e",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

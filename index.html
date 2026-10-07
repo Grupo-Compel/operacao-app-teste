@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f2a2e">
+<title>Operação · Teste de campo</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icone-192.png">
+<link rel="apple-touch-icon" href="icone-192.png">
+<style>
+  :root { --fundo:#f3f5f4; --cartao:#fff; --texto:#1b2526; --suave:#5b6b6c; --linha:#d9e0df; --marca:#0f2a2e;
+          --acao:#0b7a66; --acao-texto:#fff; --aviso:#9a5b00; --aviso-fundo:#fff4e0; --erro:#a3261b; --erro-fundo:#fdecea; --ok:#1d6b3a; --ok-fundo:#e6f4ea; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fundo:#101718; --cartao:#182223; --texto:#e8eeee; --suave:#9fb0b0; --linha:#2b3a3b; --marca:#0b1d20;
+            --acao:#2fa48c; --aviso:#f0b35a; --aviso-fundo:#3a2c14; --erro:#ff8a7d; --erro-fundo:#3b1b18; --ok:#7fd6a0; --ok-fundo:#16301f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--fundo); color:var(--texto); font:16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background:var(--marca); color:#fff; padding:14px 16px 12px; position:sticky; top:0; z-index:2; }
+  header h1 { margin:0; font-size:18px; font-weight:650; letter-spacing:.2px; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .chip { font-size:12.5px; padding:3px 9px; border-radius:99px; background:rgba(255,255,255,.14); }
+  .chip.sem { background:#a3261b; } .chip.com { background:#1d6b3a; }
+  main { padding:12px 16px 40px; max-width:640px; margin:0 auto; }
+  section { background:var(--cartao); border:1px solid var(--linha); border-radius:12px; padding:14px; margin-bottom:12px; }
+  h2 { font-size:15px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.6px; color:var(--suave); }
+  label { display:block; font-size:14px; color:var(--suave); margin:10px 0 4px; }
+  input, textarea { width:100%; font:inherit; padding:11px 12px; border:1px solid var(--linha); border-radius:9px; background:var(--fundo); color:var(--texto); }
+  textarea { min-height:70px; }
+  .duas { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  button, .botao { display:block; width:100%; margin-top:12px; padding:14px; font:inherit; font-weight:650; border:0; border-radius:10px;
+                   background:var(--acao); color:var(--acao-texto); text-align:center; cursor:pointer; }
+  button.secundario { background:transparent; color:var(--acao); border:1.5px solid var(--acao); }
+  button:disabled { opacity:.5; }
+  .oculto { display:none !important; }
+  .medida { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:14.5px; margin-top:8px; }
+  .medida dt { color:var(--suave); } .medida dd { margin:0; font-variant-numeric:tabular-nums; }
+  .aviso { padding:10px 12px; border-radius:9px; font-size:14.5px; margin-top:10px; background:var(--aviso-fundo); color:var(--aviso); }
+  .aviso.erro { background:var(--erro-fundo); color:var(--erro); } .aviso.ok { background:var(--ok-fundo); color:var(--ok); }
+  #previa { width:100%; border-radius:9px; margin-top:10px; display:block; }
+  .rumo { font-size:28px; font-weight:700; font-variant-numeric:tabular-nums; }
+  ul.fila { list-style:none; padding:0; margin:8px 0 0; }
+  ul.fila li { border-top:1px solid var(--linha); padding:10px 0; font-size:14.5px; }
+  .estado { display:inline-block; font-size:12.5px; padding:2px 8px; border-radius:99px; margin-top:4px; }
+  .estado.pendente { background:var(--aviso-fundo); color:var(--aviso); } .estado.enviado { background:var(--ok-fundo); color:var(--ok); }
+  .estado.recusado { background:var(--erro-fundo); color:var(--erro); }
+  .suave { color:var(--suave); font-size:13.5px; }
+  footer { text-align:center; color:var(--suave); font-size:12.5px; padding:8px 16px 28px; }
+  footer a { color:inherit; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Operação · Teste de campo</h1>
+  <div class="chips"><span id="chipRede" class="chip">…</span><span id="chipInstalado" class="chip">…</span><span id="chipFila" class="chip">fila: 0</span></div>
+</header>
+<main>
+  <div id="avisoVersao" class="aviso oculto">Versão nova instalada. Feche o app e abra de novo.</div>
+
+  <section id="painelConfig" class="oculto">
+    <h2>Configurar (uma vez)</h2>
+    <p class="suave">Na planilha "Operação - Base", menu <b>Operação → Ligar o teste do app do celular</b>. Copie a linha de configuração inteira e cole aqui.</p>
+    <label for="linhaConfig">Linha de configuração</label>
+    <textarea id="linhaConfig" placeholder="https://script.google.com/macros/s/…/exec#código"></textarea>
+    <button id="btConfig">Salvar configuração</button>
+    <div id="avisoConfig" class="aviso erro oculto"></div>
+  </section>
+
+  <section id="painelNovo">
+    <h2>Novo registro</h2>
+    <div class="duas">
+      <div><label for="prefixo">Prefixo</label><input id="prefixo" autocomplete="off" placeholder="CPL-DOU-B201"></div>
+      <div><label for="obra">Obra</label><input id="obra" inputmode="numeric" autocomplete="off" placeholder="0202601348"></div>
+    </div>
+    <div class="duas">
+      <div><label for="quantidade">Quantidade</label><input id="quantidade" inputmode="decimal" autocomplete="off"></div>
+      <div><label for="nota">Observação</label><input id="nota" autocomplete="off"></div>
+    </div>
+
+    <label class="botao secundario" for="arquivoFoto" style="border:1.5px solid var(--acao);background:transparent;color:var(--acao)">📷 Tirar foto</label>
+    <input id="arquivoFoto" type="file" accept="image/*" capture="environment" class="oculto">
+    <img id="previa" class="oculto" alt="Foto tirada, com a marca d'água">
+    <dl id="medidaFoto" class="medida oculto"></dl>
+
+    <h2 style="margin-top:16px">GPS</h2>
+    <div id="estadoGps" class="suave">procurando satélites…</div>
+    <dl id="medidaGps" class="medida oculto"></dl>
+
+    <h2 style="margin-top:16px">Bússola</h2>
+    <div><span id="rumo" class="rumo">—</span> <span id="estadoBussola" class="suave">esperando o sensor…</span></div>
+    <button id="btBussola" class="secundario oculto">Ativar bússola</button>
+
+    <button id="btGuardar">Guardar no celular</button>
+    <div id="avisoGuardar" class="aviso oculto"></div>
+  </section>
+
+  <section id="painelFila">
+    <h2>Fila de envio</h2>
+    <div id="resumoFila" class="suave">—</div>
+    <button id="btEnviar">Enviar agora</button>
+    <div id="avisoEnvio" class="aviso oculto"></div>
+    <ul id="listaFila" class="fila"></ul>
+    <button id="btLimpar" class="secundario">Apagar do celular os já enviados</button>
+  </section>
+
+  <section id="painelMedicoes">
+    <h2>Medições deste aparelho</h2>
+    <dl id="medicoes" class="medida"></dl>
+    <button id="btPersistir" class="secundario">Pedir para o celular não apagar os dados</button>
+  </section>
+</main>
+<footer>versão <span id="versao"></span> · <a href="#" id="lnkConfig">trocar a configuração</a></footer>
+<script src="fila.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
