@@ -7,7 +7,7 @@
    seriam a família 2 do 02_LICOES (a mesma regra em dois lugares, e só um
    aprende). */
 
-var VERSAO_APP = '3 · 07/10/2026';
+var VERSAO_APP = '4 · 07/10/2026';
 var BANCO = 'operacao-teste';
 
 function abrirBanco() {
@@ -83,6 +83,7 @@ function enviarFila(enviadoPor) {
         return (r.foto ? blobParaDataUrl(r.foto) : Promise.resolve('')).then(function (foto) {
           var corpo = {
             codigo: cfg.codigo, id: r.id, criadoEm: r.criadoEm, enviadoPor: enviadoPor, tentativas: r.tentativas,
+            base: r.base, etapa: r.etapa, ponto: r.ponto, campo: r.campo,
             prefixo: r.prefixo, obra: r.obra, quantidade: r.quantidade, nota: r.nota,
             latitude: r.latitude, longitude: r.longitude, utm: r.utm, precisao: r.precisao, rumo: r.rumo,
             foto: foto, versao: VERSAO_APP, medicoes: r.medicoes

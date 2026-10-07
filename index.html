@@ -26,7 +26,7 @@
   section { background:var(--cartao); border:1px solid var(--linha); border-radius:12px; padding:14px; margin-bottom:12px; }
   h2 { font-size:15px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.6px; color:var(--suave); }
   label { display:block; font-size:14px; color:var(--suave); margin:10px 0 4px; }
-  input, textarea { width:100%; font:inherit; padding:11px 12px; border:1px solid var(--linha); border-radius:9px; background:var(--fundo); color:var(--texto); }
+  input, textarea, select { width:100%; font:inherit; padding:11px 12px; border:1px solid var(--linha); border-radius:9px; background:var(--fundo); color:var(--texto); }
   textarea { min-height:70px; }
   .duas { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   button, .botao { display:block; width:100%; margin-top:12px; padding:14px; font:inherit; font-weight:650; border:0; border-radius:10px;
@@ -78,6 +78,22 @@
       <div><label for="nota">Observação</label><input id="nota" autocomplete="off"></div>
     </div>
 
+    <div class="duas">
+      <div><label for="base">Base</label><select id="base">
+        <option>DOU</option><option>MAR</option><option>RBR</option><option>NAN</option><option>PPO</option>
+        <option>NAV</option><option>VHA</option><option>SGO</option><option>COL</option></select></div>
+      <div><label for="etapa">Etapa</label><select id="etapa">
+        <option value="VIAB">Viabilidade</option><option value="EXEC" selected>Execução</option><option value="FECH">Fechamento</option></select></div>
+    </div>
+    <div class="duas">
+      <div><label for="ponto">Ponto (FP01, EQ01, PD01…)</label><input id="ponto" autocomplete="off" placeholder="GERAL" style="text-transform:uppercase"></div>
+      <div><label for="campo">O que a foto mostra</label><select id="campo">
+        <option>POSTE-INST</option><option>POSTE-RET</option><option>ESTRUTURA-INST</option>
+        <option>TRANSFORMADOR-INST</option><option>TRANSFORMADOR-DESAT</option><option>CHAVE-INST</option><option>CHAVE-DESAT</option>
+        <option>EQUIPAMENTO-INST</option><option>EQUIPAMENTO-DESAT</option><option>MEDICAO</option>
+        <option>APR-FRENTE</option><option>APR-VERSO</option><option>SINALIZACAO</option><option>DITAIS</option><option>CROQUI</option>
+        <option>PODA-ANTES</option><option>PODA-DEPOIS</option><option>LOCAL</option><option>OUTRA</option></select></div>
+    </div>
     <label class="botao secundario" for="arquivoFoto" style="border:1.5px solid var(--acao);background:transparent;color:var(--acao)">📷 Tirar foto</label>
     <input id="arquivoFoto" type="file" accept="image/*" capture="environment" class="oculto">
     <img id="previa" class="oculto" alt="Foto tirada, com a marca d'água">

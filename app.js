@@ -49,6 +49,13 @@ window.addEventListener('offline', desenharRede);
    uma URL de 100 caracteres é onde o teste morreria antes de começar. */
 function lerLinhaDeConfig(linha) {
   linha = String(linha || '').trim();
+  /* SÓ O CÓDIGO (07/10): o menu da planilha deixou de mostrar a URL, porque
+     a que o Google devolvia era de uma implantação arquivada. Celular já
+     configurado guarda o endereço e troca só o código. */
+  if (/^[a-f0-9]{12}$/i.test(linha)) {
+    if (estado.cfg && estado.cfg.url) return { url: estado.cfg.url, codigo: linha };
+    return { erro: 'Primeira vez neste celular: cole a URL do app da Web (termina em /exec), o sinal # e o código.' };
+  }
   var p = linha.lastIndexOf('#');
   if (p < 0) return { erro: 'A linha precisa ter a URL, o sinal # e o código.' };
   var url = linha.slice(0, p).trim(), codigo = linha.slice(p + 1).trim();
@@ -125,7 +132,7 @@ function paraBlob(canvas, q) { return new Promise(function (ok) { canvas.toBlob(
 function marcaDagua(ctx, w, h) {
   var g = estado.gps, linhas = [new Date().toLocaleString('pt-BR') + (estado.rumo !== null ? '   rumo ' + estado.rumo + '° ' + pontoCardeal(estado.rumo) : '')];
   linhas.push(g ? utmDe(g.lat, g.lon).texto + '   ± ' + g.precisao + ' m' : 'sem posição do GPS');
-  linhas.push([$('prefixo').value.trim(), $('obra').value.trim()].filter(Boolean).join('   ·   ') || 'teste');
+  linhas.push([$('obra').value.trim(), $('etapa').value, $('prefixo').value.trim(), ($('ponto').value.trim().toUpperCase() || 'GERAL') + ' ' + $('campo').value].filter(Boolean).join('   ·   '));
   var fonte = Math.max(14, Math.round(w / 42)), alto = Math.round(fonte * 1.35 * linhas.length + fonte * 0.8);
   ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0, h - alto, w, alto);
   ctx.fillStyle = '#fff'; ctx.font = '600 ' + fonte + 'px system-ui, sans-serif'; ctx.textBaseline = 'top';
@@ -178,12 +185,16 @@ $('arquivoFoto').addEventListener('change', function () {
 
 // ---------------------------------------------------------------- guardar
 $('btGuardar').addEventListener('click', function () {
-  var prefixo = $('prefixo').value.trim(), obra = $('obra').value.trim();
-  if (!prefixo || !obra) { aviso('avisoGuardar', 'Prefixo e obra são obrigatórios.', 'erro'); return; }
+  var prefixo = $('prefixo').value.trim(), obra = $('obra').value.trim(), etapa = $('etapa').value;
+  /* O prefixo só é exigido na execução: é a equipe que fotografa. Na
+     viabilidade e no fechamento quem fotografa não é uma equipe de obra. */
+  if (!obra) { aviso('avisoGuardar', 'O número da obra é obrigatório.', 'erro'); return; }
+  if (etapa === 'EXEC' && !prefixo) { aviso('avisoGuardar', 'Na execução, o prefixo da equipe é obrigatório.', 'erro'); return; }
   var pos = estado.fotoPosicao || estado.gps;
   espacoLivreMb().then(function (livre) {
     var r = {
       id: novoId(), criadoEm: new Date().toISOString(), estado: 'pendente', tentativas: 0,
+      base: $('base').value, etapa: etapa, ponto: $('ponto').value.trim().toUpperCase() || 'GERAL', campo: $('campo').value,
       prefixo: prefixo, obra: obra, quantidade: $('quantidade').value.trim(), nota: $('nota').value.trim(),
       latitude: pos ? pos.lat.toFixed(6) : '', longitude: pos ? pos.lon.toFixed(6) : '',
       utm: pos ? utmDe(pos.lat, pos.lon).texto : '', precisao: pos ? pos.precisao : '', rumo: estado.rumo === null ? '' : estado.rumo,
@@ -191,6 +202,7 @@ $('btGuardar').addEventListener('click', function () {
       medicoes: { msGps: estado.msGps, fotoLargura: estado.fotoMed ? estado.fotoMed.largura : '', msFoto: estado.fotoMed ? estado.fotoMed.ms : '',
                   aparelho: aparelho(), instalado: instalado() ? 'sim' : 'não', msAbrir: estado.msAbrir, espacoLivreMb: livre }
     };
+    gravarConfig('ultimos', { base: r.base, etapa: r.etapa }).catch(function () { });
     return guardarRegistro(r).then(function () {
       aviso('avisoGuardar', 'Guardado no celular' + (navigator.onLine ? '. Enviando…' : '. Vai sozinho quando houver sinal.'), 'ok');
       estado.foto = null; estado.fotoMed = null; estado.fotoPosicao = null;
@@ -220,7 +232,7 @@ function desenharFila() {
         : r.estado === 'recusado' ? '<span class="estado recusado">recusado</span>'
         : '<span class="estado pendente">guardado, aguardando sinal' + (r.tentativas ? ' · ' + r.tentativas + ' tentativa(s)' : '') + '</span>';
       var esc = function (t) { return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
-      return '<li data-id="' + esc(r.id) + '"><b>' + esc(r.prefixo) + '</b> · obra ' + esc(r.obra) + (r.quantidade ? ' · qtd ' + esc(r.quantidade) : '') +
+      return '<li data-id="' + esc(r.id) + '"><b>' + esc(r.obra) + '</b>' + (r.etapa ? ' · ' + esc(r.etapa) + ' · ' + esc(r.ponto) + ' ' + esc(r.campo) : '') + (r.prefixo ? ' · ' + esc(r.prefixo) : '') + (r.quantidade ? ' · qtd ' + esc(r.quantidade) : '') +
         '<div class="suave">' + hora(r.criadoEm) + ' · ' + kb + (r.utm ? ' · ' + esc(r.utm) : '') + '</div>' + est +
         (r.ultimoErro && r.estado !== 'enviado' ? '<div class="suave">' + esc(r.ultimoErro) + '</div>' : '') + '</li>';
     }).join('');
@@ -309,6 +321,7 @@ $('versao').textContent = VERSAO_APP;
 desenharRede();
 ligarGps();
 ligarBussola();
+lerConfig('ultimos').then(function (u) { if (u) { if (u.base) $('base').value = u.base; if (u.etapa) $('etapa').value = u.etapa; } }).catch(function () { });
 lerConfig('servidor').then(function (c) {
   estado.cfg = c;
   mostra('painelConfig', !c);
