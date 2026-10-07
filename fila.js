@@ -7,7 +7,7 @@
    seriam a família 2 do 02_LICOES (a mesma regra em dois lugares, e só um
    aprende). */
 
-var VERSAO_APP = '1 · 06/10/2026';
+var VERSAO_APP = '2 · 07/10/2026';
 var BANCO = 'operacao-teste';
 
 function abrirBanco() {
@@ -113,9 +113,19 @@ function enviarFila(enviadoPor) {
             })
             .catch(function (e) {
               if (relogio) clearTimeout(relogio);
-              r.ultimoErro = e && e.servidor ? e.msg : 'Sem conexão com o servidor.';
+              /* COM SINAL E SEM RESPOSTA NÃO É "SEM CONEXÃO" (Dalton, 07/10, 10:54).
+                 O navegador do celular recusa a resposta do Apps Script quando ela
+                 não vem do doPost: implantação sem o 06_AppTeste.gs, ou "Quem pode
+                 acessar" diferente de "Qualquer pessoa" (aí o Google responde com a
+                 tela de login). Para o app, as duas coisas parecem falta de rede; a
+                 diferença é o celular dizer que está com sinal. */
+              var comSinal = typeof navigator !== 'undefined' && navigator.onLine;
+              r.ultimoErro = e && e.servidor ? e.msg
+                : comSinal ? 'Com sinal, mas o servidor não respondeu. Confira: a implantação foi republicada com o 06_AppTeste.gs, e "Quem pode acessar" está em "Qualquer pessoa"?'
+                : 'Sem conexão com o servidor.';
               resumo.erro = r.ultimoErro;
-              if (!(e && e.servidor)) resumo.semRede = true;
+              if (!(e && e.servidor)) resumo.semRede = !comSinal;
+              if (!(e && e.servidor) && comSinal) resumo.servidorFora = true;
               return guardarRegistro(r);   // para aqui: o resto também não passaria
             });
         });

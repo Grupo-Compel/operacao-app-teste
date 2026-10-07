@@ -11,7 +11,7 @@
    "enviado" que não chegou. */
 importScripts('fila.js');
 
-var VERSAO_CACHE = 'operacao-teste-1';
+var VERSAO_CACHE = 'operacao-teste-2';
 var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 
 self.addEventListener('install', function (e) {
@@ -44,6 +44,6 @@ self.addEventListener('fetch', function (e) {
 self.addEventListener('sync', function (e) {
   if (e.tag !== 'enviar-fila') return;
   e.waitUntil(enviarFila('segundo plano').then(function (r) {
-    if (r && r.semRede) throw new Error('sem rede: o navegador tenta de novo');
+    if (r && (r.semRede || r.servidorFora)) throw new Error('sem rede: o navegador tenta de novo');
   }));
 });
