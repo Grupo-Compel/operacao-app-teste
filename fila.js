@@ -7,7 +7,7 @@
    seriam a família 2 do 02_LICOES (a mesma regra em dois lugares, e só um
    aprende). */
 
-var VERSAO_APP = '2 · 07/10/2026';
+var VERSAO_APP = '3 · 07/10/2026';
 var BANCO = 'operacao-teste';
 
 function abrirBanco() {

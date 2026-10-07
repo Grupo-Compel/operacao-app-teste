@@ -241,6 +241,35 @@ $('btEnviar').addEventListener('click', function () {
   if (!estado.cfg) { mostra('painelConfig', true); return; }
   aviso('avisoEnvio', 'enviando…'); enviar('botão');
 });
+/* TESTAR O SERVIDOR SEM GRAVAR (07/10/2026). O primeiro teste de campo mostrou
+   "sem conexão" com sinal, e a aba APP_TESTE vazia. Mandar um registro sem ID
+   separa os casos sem escrever nada: o 06_AppTeste.gs confere o código ANTES
+   do ID, então se a resposta reclama do ID, o servidor e o código estão
+   certos. Se não há resposta legível, o endereço não chega ao doPost. */
+function testarServidor() {
+  if (!estado.cfg) { mostra('painelConfig', true); return Promise.resolve(); }
+  aviso('avisoEnvio', 'testando o servidor…');
+  var t0 = Date.now();
+  return fetch(estado.cfg.url, { method: 'POST', body: JSON.stringify({ codigo: estado.cfg.codigo, id: '' }), redirect: 'follow',
+                                 headers: { 'Content-Type': 'text/plain;charset=utf-8' } })
+    .then(function (resp) { return resp.text(); })
+    .then(function (texto) {
+      var s = ' (' + seg(Date.now() - t0) + ')';
+      var j; try { j = JSON.parse(texto); } catch (e) { j = null; }
+      if (!j) aviso('avisoEnvio', 'Respondeu uma página, e não o servidor do teste: é a tela de login do Google. A implantação precisa estar como "Qualquer pessoa".' + s, 'erro');
+      else if (j.codigoErrado) aviso('avisoEnvio', 'O servidor responde, mas o código é outro. Rode de novo o menu "Ligar o teste do app" e cole a linha nova.' + s, 'erro');
+      else if (j.desligado) aviso('avisoEnvio', 'O servidor responde, mas o teste está desligado. Rode o menu "Ligar o teste do app".' + s, 'erro');
+      else if (/identificador/.test(j.erro || '')) aviso('avisoEnvio', 'Servidor e código CERTOS. O envio deve funcionar: toque em "Enviar agora".' + s, 'ok');
+      else aviso('avisoEnvio', 'O servidor respondeu: ' + (j.erro || JSON.stringify(j)) + s, 'erro');
+    })
+    .catch(function () {
+      aviso('avisoEnvio', navigator.onLine
+        ? 'O endereço não chega ao servidor do teste. Em "Gerenciar implantações": a URL de lá é a mesma da linha de configuração? A versão publicada é posterior ao 06_AppTeste.gs ("Nova versão" na MESMA implantação, e não uma implantação nova)?'
+        : 'Sem sinal: teste de novo com sinal.', navigator.onLine ? 'erro' : '');
+    });
+}
+$('btTestar').addEventListener('click', testarServidor);
+
 $('btLimpar').addEventListener('click', function () {
   listarRegistros().then(function (l) {
     var enviados = l.filter(function (r) { return r.estado === 'enviado'; });
