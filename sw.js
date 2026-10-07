@@ -11,7 +11,7 @@
    "enviado" que não chegou. */
 importScripts('fila.js');
 
-var VERSAO_CACHE = 'operacao-teste-4';
+var VERSAO_CACHE = 'operacao-teste-5';
 var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 
 self.addEventListener('install', function (e) {
@@ -44,6 +44,23 @@ self.addEventListener('fetch', function (e) {
 self.addEventListener('sync', function (e) {
   if (e.tag !== 'enviar-fila') return;
   e.waitUntil(enviarFila('segundo plano').then(function (r) {
-    if (r && (r.semRede || r.servidorFora)) throw new Error('sem rede: o navegador tenta de novo');
+    return anotarSegundoPlano(r && r.ocupado ? 'o app aberto já estava enviando'
+      : r && r.erro ? 'falhou: ' + r.erro : (r ? r.enviados : 0) + ' enviado(s)').then(function () {
+      if (r && (r.semRede || r.servidorFora)) throw new Error('sem rede: o navegador tenta de novo');
+    });
+  }, function (erro) {
+    return anotarSegundoPlano('falhou: ' + (erro && erro.message)).then(function () { throw erro; });
   }));
 });
+
+/* O DIÁRIO DO SEGUNDO PLANO (07/10/2026). No primeiro teste, com o app
+   fechado, nada foi enviado até o app ser aberto. Sem anotar, não dá para
+   saber se o Android nunca acordou este arquivo ou se acordou e o envio
+   falhou -- e o conserto de cada caso é diferente. As 10 últimas vezes que
+   ele acordou ficam guardadas no celular, e a tela as mostra. */
+function anotarSegundoPlano(resultado) {
+  return lerConfig('segundoPlano').then(function (l) {
+    l = (l || []).concat([{ quando: new Date().toISOString(), resultado: resultado }]).slice(-10);
+    return gravarConfig('segundoPlano', l);
+  }).catch(function () { });
+}

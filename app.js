@@ -300,9 +300,19 @@ function medir() {
     ['envio em segundo plano', ('serviceWorker' in navigator && 'SyncManager' in window) ? 'disponível' : 'não disponível'],
     ['funciona sem sinal', navigator.serviceWorker && navigator.serviceWorker.controller ? 'sim (cópia guardada)' : 'ainda não: abra uma vez com sinal']];
   var p1 = espacoLivreMb(), p2 = navigator.storage && navigator.storage.persisted ? navigator.storage.persisted() : Promise.resolve(null);
-  return Promise.all([p1, p2]).then(function (x) {
+  /* O Chrome não pergunta nada para o segundo plano: ele tem uma chave nas
+     configurações do site ("Sincronização em segundo plano"), ligada de
+     fábrica. Esta linha diz como ela está neste aparelho. */
+  var p3 = navigator.permissions && navigator.permissions.query
+    ? navigator.permissions.query({ name: 'background-sync' }).then(function (x) { return x.state; }, function () { return '?'; })
+    : Promise.resolve('?');
+  var p4 = lerConfig('segundoPlano').catch(function () { return null; });
+  return Promise.all([p1, p2, p3, p4]).then(function (x) {
     linhas.push(['espaço livre para o app', x[0] === '' ? '?' : x[0] + ' MB']);
     linhas.push(['dados protegidos', x[1] === null ? '?' : (x[1] ? 'sim' : 'não (o celular pode apagar se faltar espaço)')]);
+    linhas.push(['segundo plano liberado', x[2] === 'granted' ? 'sim' : x[2] === 'denied' ? 'NÃO (Chrome > Configurações do site > Sincronização em segundo plano)' : x[2]]);
+    var sp = x[3] || [];
+    linhas.push(['o Android acordou o app', sp.length ? sp.slice(-3).reverse().map(function (a) { return hora(a.quando) + ': ' + a.resultado; }).join('<br>') : 'nenhuma vez ainda']);
     $('medicoes').innerHTML = linhas.map(function (l) { return '<dt>' + l[0] + '</dt><dd>' + l[1] + '</dd>'; }).join('');
   });
 }
@@ -326,5 +336,8 @@ lerConfig('servidor').then(function (c) {
   estado.cfg = c;
   mostra('painelConfig', !c);
   estado.msAbrir = Math.round(performance.now());
+  /* Se ficou registro na fila, o pedido de envio em segundo plano é refeito
+     ao abrir: o Android pode ter descartado o pedido anterior. */
+  listarRegistros().then(function (l) { if (l.some(function (r) { return r.estado === 'pendente'; })) pedirEnvioEmSegundoPlano(); });
   return Promise.all([desenharFila(), medir()]);
 }).then(function () { if (navigator.onLine) return enviar('app aberto'); });
