@@ -7,7 +7,7 @@
    seriam a família 2 do 02_LICOES (a mesma regra em dois lugares, e só um
    aprende). */
 
-var VERSAO_APP = '6 · 07/10/2026';
+var VERSAO_APP = '7 · 08/10/2026';
 var BANCO = 'operacao-teste';
 
 function abrirBanco() {
@@ -66,7 +66,24 @@ var enviandoAgora = false;
  * é JSON é quase sempre a página de login do Google -- a implantação não está
  * como "Qualquer pessoa" -- e o registro continua no celular.
  */
+/* UMA TRAVA SÓ PARA A TELA E PARA O SEGUNDO PLANO (08/10/2026). A variável
+   enviandoAgora vale só dentro de quem a criou: a tela tem a dela e o service
+   worker tem a dele. Com o app aberto e o Android acordando o service worker
+   ao mesmo tempo, os dois mandariam o mesmo registro (o servidor não duplica,
+   mas são duas fotos subindo pela mesma rede fraca). A trava do navegador
+   (navigator.locks) é uma só para as duas partes do app. Navegador sem ela
+   fica com a variável, que protege ao menos cada parte de si mesma. */
 function enviarFila(enviadoPor) {
+  if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
+    return navigator.locks.request('operacao-enviar-fila', { ifAvailable: true }, function (trava) {
+      if (!trava) return { ocupado: true };
+      return enviarFilaDentroDaTrava(enviadoPor);
+    });
+  }
+  return enviarFilaDentroDaTrava(enviadoPor);
+}
+
+function enviarFilaDentroDaTrava(enviadoPor) {
   if (enviandoAgora) return Promise.resolve({ ocupado: true });
   enviandoAgora = true;
   var resumo = { enviados: 0, pendentes: 0, erro: '', semRede: false };
@@ -119,10 +136,13 @@ function enviarFila(enviadoPor) {
                  não vem do doPost: implantação sem o 06_AppTeste.gs, ou "Quem pode
                  acessar" diferente de "Qualquer pessoa" (aí o Google responde com a
                  tela de login). Para o app, as duas coisas parecem falta de rede; a
-                 diferença é o celular dizer que está com sinal. */
+                 diferença é o celular dizer que está com sinal.
+                 E O REGISTRO PODE TER CHEGADO (07/10, 20:39): a 5ª tentativa
+                 foi gravada na planilha às 20:39:17 e a resposta não voltou ao
+                 celular. Por isso a frase não diz "não chegou". */
               var comSinal = typeof navigator !== 'undefined' && navigator.onLine;
               r.ultimoErro = e && e.servidor ? e.msg
-                : comSinal ? 'Com sinal, mas o servidor não respondeu. Confira: a implantação foi republicada com o 06_AppTeste.gs, e "Quem pode acessar" está em "Qualquer pessoa"?'
+                : comSinal ? 'Com sinal, mas a resposta do servidor não chegou. Pode ser a rede ainda voltando: o registro continua guardado e vai de novo (se já tiver chegado, o servidor não duplica). Se acontecer sempre, toque em "Testar o servidor".'
                 : 'Sem conexão com o servidor.';
               resumo.erro = r.ultimoErro;
               if (!(e && e.servidor)) resumo.semRede = !comSinal;

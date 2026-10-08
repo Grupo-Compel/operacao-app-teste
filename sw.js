@@ -11,7 +11,7 @@
    "enviado" que não chegou. */
 importScripts('fila.js');
 
-var VERSAO_CACHE = 'operacao-teste-6';
+var VERSAO_CACHE = 'operacao-teste-7';
 var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 
 self.addEventListener('install', function (e) {
@@ -47,7 +47,13 @@ self.addEventListener('fetch', function (e) {
    pé. A próxima tentativa do Chrome viria uns 5 minutos depois. Acordado, o
    app espera e tenta de novo dentro da mesma vez (o Android dá alguns minutos
    para a tarefa terminar), em vez de desistir na primeira. */
-var ESPERAS_SEM_REDE = [5000, 15000, 30000];
+/* MAIS UM MINUTO (08/10/2026). Às 20:38 de 07/10 o app foi acordado, insistiu
+   os 50 s (5 + 15 + 30) sempre "sem conexão", e desistiu; um minuto depois, às
+   20:39, o celular já estava com rede. A quarta espera, de 60 s, cobre esse
+   minuto. O total (110 s, mais os envios) fica abaixo dos poucos minutos que o
+   Chrome dá à tarefa acordada; se ele cortar antes, nada se perde: o registro
+   continua na fila e o Chrome acorda o app de novo mais tarde. */
+var ESPERAS_SEM_REDE = [5000, 15000, 30000, 60000];
 
 function esperar(ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }
 

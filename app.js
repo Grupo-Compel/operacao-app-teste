@@ -228,7 +228,7 @@ function desenharFila() {
     $('listaFila').innerHTML = l.slice(0, 50).map(function (r) {
       var kb = r.foto ? Math.round(r.foto.size / 1024) + ' KB' : 'sem foto';
       var est = r.estado === 'enviado'
-        ? '<span class="estado enviado">enviado ' + hora(r.enviadoEm) + ' · ' + r.enviadoPor + ' · ' + seg(r.msEnvio) + (r.duplicado ? ' · já estava lá' : '') + '</span>'
+        ? '<span class="estado enviado">enviado ' + hora(r.enviadoEm) + ' · ' + r.enviadoPor + ' · ' + seg(r.msEnvio) + (r.duplicado ? ' · já tinha chegado antes (a resposta anterior se perdeu no caminho)' : '') + '</span>'
         : r.estado === 'recusado' ? '<span class="estado recusado">recusado</span>'
         : '<span class="estado pendente">guardado, aguardando sinal' + (r.tentativas ? ' · ' + r.tentativas + ' tentativa(s)' : '') + '</span>';
       var esc = function (t) { return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
