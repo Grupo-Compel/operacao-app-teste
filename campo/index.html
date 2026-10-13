@@ -85,6 +85,15 @@
   ul.lista { list-style:none; padding:0; margin:0; } ul.lista li { border-top:1px solid var(--linha); padding:9px 0; font-size:14px; } ul.lista li:first-child { border-top:0; }
   a { color:var(--azul); } ul.lista a { color:inherit; text-decoration:none; } ul.lista a b { text-decoration:underline; text-decoration-color:var(--linha); }
   details summary { cursor:pointer; color:var(--azul); font-weight:600; min-height:var(--toque); display:flex; align-items:center; }
+  /* 5b: o dia em horários (as cores dos registros são as do protótipo 3.4) */
+  ul.registros li.reg { display:grid; grid-template-columns:96px 1fr; gap:8px; align-items:center; border-left:4px solid #8E97A6; padding-left:8px; margin:4px 0; }
+  ul.registros li.reg input { min-height:40px; padding:6px; }
+  ul.registros li.reg small { display:block; color:var(--tinta-fraca); }
+  li.reg-servico { border-left-color:var(--verde) !important; } li.reg-parada { border-left-color:var(--ambar) !important; }
+  li.reg-almoco { border-left-color:#C9CDD4 !important; } li.reg-chegada { border-left-color:var(--grafite) !important; }
+  .toques { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; } .toques .btn { margin-top:0; }
+  .toques .btn:last-child { grid-column:1 / -1; }
+  .folha-resumo { border-top:1px solid var(--linha); padding-top:8px; margin-top:8px; } .folha-resumo:first-of-type { border-top:0; margin-top:0; padding-top:0; }
   footer { text-align:center; color:var(--tinta-fraca); font-size:12px; padding:6px 0 4px; }
 </style>
 </head>

@@ -1,4 +1,4 @@
-/* app.js — app do encarregado (Operação, etapa 5a, 13/10/2026). As quatro
+/* app.js — app do encarregado (Operação, etapa 5a e 5b, 13/10/2026). As quatro
    telas do celular: Hoje (OPE-14), Diário (OPE-15), Encerrar (OPE-16) e
    Envio (OPE-17), com o visual do protótipo 3.4.
 
@@ -14,7 +14,12 @@
    facilitar"): o celular é ligado UMA vez, com o código de 6 números que o
    supervisor gera na tela "Aparelhos do campo" (OPE-31). Depois disso, a chave
    fica guardada aqui. Quem assina o dia é a foto do rosto, tirada ao encerrar
-   ("tirar apenas uma foto da facial para registrar que é o encarregado"). */
+   ("tirar apenas uma foto da facial para registrar que é o encarregado").
+
+   5b (13/10/2026, noite): O DIA EM HORÁRIOS E A EXECUÇÃO. Os horários do PS
+   saem dos toques do dia (saí, iniciei o serviço, parada, almoço, cheguei), e
+   cada obra leva a execução (pendência, desligamento, equipamento). As folhas
+   do dia encerram juntas, com uma foto do rosto. */
 
 // ---------------------------------------------------------------- estado
 var E = {
@@ -25,9 +30,11 @@ var E = {
   diarios: [],          // a cópia da lista do banco, relida a cada desenho
   aberto: null,         // o diário aberto na aba Diário
   baixando: false, enviando: false, ultimoEnvio: null, aviso: null, versaoNova: false,
-  ligar: null           // { codigo, url } vindos do link
+  ligar: null,          // { codigo, url } vindos do link
+  dias: {},             // 'aaaa-mm-dd|PREFIXO' -> o dia em horários da equipe (5b)
+  equipe: ''            // a equipe escolhida, quando o encarregado tem mais de uma
 };
-var REGRAS = {};        // geradoEm do pacote -> { validarLancamentoPS, chaveDoLancamentoPS } | { erro }
+var REGRAS = {};        // geradoEm do pacote -> as funções de regra do servidor | { erro }
 
 /* Rótulos e textos de tela (não são regras: a regra é o que o servidor confere). */
 var NOME_DO_ESTADO = { rascunho: 'Rascunho', encerrado: 'Encerrado, esperando envio', enviado: 'Enviado', recusado: 'Recusado pelo servidor', jaLancado: 'Já lançado por outro' };
@@ -71,7 +78,10 @@ function regrasDe(pac) {
   if (!pac || !pac.regras) return null;
   var k = pac.geradoEm + '|' + pac.dia;
   if (!REGRAS[k]) {
-    try { REGRAS[k] = new Function(pac.regras + '\nreturn { validarLancamentoPS: validarLancamentoPS, chaveDoLancamentoPS: chaveDoLancamentoPS };')(); }
+    /* As da 5b só existem no pacote do servidor da 5b: o pacote antigo abre, e o app pede para baixar de novo. */
+    try { REGRAS[k] = new Function(pac.regras + '\nreturn { validarLancamentoPS: validarLancamentoPS, chaveDoLancamentoPS: chaveDoLancamentoPS,' +
+      ' validarDiaDoApp: typeof validarDiaDoApp === "function" ? validarDiaDoApp : null, horariosDoDiaApp: typeof horariosDoDiaApp === "function" ? horariosDoDiaApp : null,' +
+      ' alvoDoDiarioApp: typeof alvoDoDiarioApp === "function" ? alvoDoDiarioApp : null, faixaDaEsperaCOD: typeof faixaDaEsperaCOD === "function" ? faixaDaEsperaCOD : null };')(); }
     catch (e) { REGRAS[k] = { erro: 'As regras do pacote não abriram neste celular (' + e.message + '). Baixe o pacote de novo.' }; }
   }
   return REGRAS[k];
@@ -212,6 +222,189 @@ function mostrarFotos() {
   });
 }
 
+// ---------------------------------------------------------------- o dia da equipe (5b)
+/*
+ * O DIA EM HORÁRIOS (5b, 13/10/2026): um toque a cada mudança do dia (saí da
+ * base, iniciei o serviço, parada, almoço, cheguei à base), como no protótipo
+ * 3.4 (OPE-15). Cada toque fecha o registro anterior naquela hora e abre o
+ * próximo; o celular guarda o início de cada um e a chegada. É um dia por
+ * equipe, guardado à parte das folhas: a equipe que faz duas obras registra o
+ * dia uma vez, e cada folha tira dele os horários dela (as regras são as do
+ * servidor, horariosDoDiaApp e validarDiaDoApp, que chegam no pacote).
+ *
+ * A HORA DO TOQUE E A HORA INFORMADA: o toque vem com a hora de agora, que o
+ * encarregado pode trocar (esqueceu de marcar na hora); o momento do toque fica
+ * guardado junto (tocadoEm), para a conferência (conceito, 11, proposta 2).
+ */
+function chaveDoDia(dia, prefixo) { return dia + '|' + String(prefixo || '').toUpperCase(); }
+function diaDaEquipe(dia, prefixo) {
+  var k = chaveDoDia(dia, prefixo);
+  if (!E.dias[k]) E.dias[k] = { chave: k, dia: dia, prefixo: String(prefixo || '').toUpperCase(), blocos: [], chegada: '', kmSaida: '', kmChegada: '' };
+  return E.dias[k];
+}
+function guardarDia(r) { r.mudadoEm = new Date().toISOString(); return gravarConfig('dia:' + r.chave, r); }
+function carregarDias() {
+  return noBanco('config', 'readonly', function (s) { return s.getAll(); }).then(function (l) {
+    (l || []).forEach(function (c) { if (/^dia:/.test(c.chave) && c.valor && c.valor.chave) E.dias[c.valor.chave] = c.valor; });
+  });
+}
+/* O que vai com o diário: só o que as regras olham. */
+function retratoDoDia(r) {
+  return { blocos: r.blocos.map(function (b) { return { t: b.t, ini: b.ini, obra: b.obra || '', motivo: b.motivo || '', obs: b.obs || '', tocadoEm: b.tocadoEm || '' }; }),
+           chegada: r.chegada || '', kmSaida: r.kmSaida || '', kmChegada: r.kmChegada || '' };
+}
+function diariosDoDia(dia, prefixo) {
+  var p = String(prefixo || '').toUpperCase();
+  return E.diarios.filter(function (d) { return d.dia === dia && String(d.form.prefixo || '').toUpperCase() === p; });
+}
+/* Encerrado ou enviado algum diário do dia, os horários não mudam mais: os outros diários do dia já levaram esse dia. */
+function diaTravado(dia, prefixo) { return diariosDoDia(dia, prefixo).some(function (d) { return ['encerrado', 'enviado', 'jaLancado'].indexOf(d.estado) >= 0; }); }
+
+/* O dia que as abas Diário e Encerrar mostram: o do diário aberto, ou o da equipe do encarregado no dia escolhido. */
+function diaAtual() {
+  if (E.aberto) return { dia: E.aberto.dia, prefixo: String(E.aberto.form.prefixo || '').toUpperCase() };
+  var pac = pacoteDe(E.dia), eqs = equipesDoDia(pac);
+  if (!eqs.length) return null;
+  return { dia: E.dia, prefixo: eqs.indexOf(E.equipe) >= 0 ? E.equipe : eqs[0] };
+}
+function equipesDoDia(pac) {
+  var out = [];
+  if (!pac) return out;
+  (pac.equipes || []).forEach(function (e) { if (out.indexOf(e.p) < 0) out.push(e.p); });
+  (pac.folhas || []).forEach(function (f) { if (f.p && out.indexOf(f.p) < 0) out.push(f.p); });
+  return out;
+}
+function nomeDoRegistro(t) { return { DESLOC: 'Deslocamento', SERVICO: 'Serviço', PARADA: 'Parada', ALMOCO: 'Almoço' }[t] || t; }
+function duracao(m) { m = Math.round(m || 0); return m >= 60 ? Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') : m + ' min'; }
+
+/* A folha que um serviço aponta (a mesma conta do servidor, alvoDoDiarioApp). */
+function alvoDoDiario(d, R) { return R && R.alvoDoDiarioApp ? R.alvoDoDiarioApp(d.form.tipoDia === 'PLANTAO' ? '' : d.form.obra, d.id) : ''; }
+/* As obras do dia para o toque: as folhas da programação e as folhas sem programação da equipe. */
+function obrasDoDia(dia, prefixo) {
+  var pac = pacoteDe(dia), R = regrasDe(pac), out = [], vistos = {};
+  if (!R || !R.alvoDoDiarioApp) return out;
+  (pac.folhas || []).forEach(function (f) {
+    if (String(f.p).toUpperCase() !== prefixo || !f.obra) return;
+    var a = R.alvoDoDiarioApp(f.obra, ''); if (vistos[a]) return; vistos[a] = 1;
+    out.push([a, 'obra ' + f.obra + (f.municipio ? ' · ' + f.municipio : '')]);
+  });
+  diariosDoDia(dia, prefixo).forEach(function (d) {
+    var a = alvoDoDiario(d, R); if (!a || vistos[a]) return; vistos[a] = 1;
+    out.push([a, (d.form.obra ? 'obra ' + d.form.obra : 'folha sem obra') + (d.extra ? ' (sem programação)' : '')]);
+  });
+  return out;
+}
+function rotuloDoAlvo(dia, prefixo, alvo) {
+  var o = obrasDoDia(dia, prefixo).filter(function (x) { return x[0] === alvo; })[0];
+  return o ? o[1] : alvo ? (alvo.charAt(0) === '#' ? 'folha sem obra' : 'obra ' + alvo) : '';
+}
+
+/* Os horários do dia nos campos do diário (expediente, almoço, km e as atividades da obra dele). */
+function aplicarDia(d) {
+  if (!d || d.estado !== 'rascunho') return;
+  var pac = pacoteDe(d.dia), R = regrasDe(pac);
+  if (!R || !R.horariosDoDiaApp) return;
+  var r = diaDaEquipe(d.dia, d.form.prefixo), h = R.horariosDoDiaApp(retratoDoDia(r)), x = d.form;
+  x.expIni = h.expIni; x.expFim = h.expFim; x.almIni = h.almIni; x.almFim = h.almFim;
+  x.kmSaida = r.kmSaida || ''; x.kmChegada = r.kmChegada || '';
+  var o = x.tipoDia === 'PRODUCAO' ? h.porObra[alvoDoDiario(d, R)] : null;
+  x.ini = o ? o.ini : ''; x.fim = o ? o.fim : '';
+  garantirExecucao(d);
+}
+function execucaoNova(f) {
+  return { pendencia: '', pendenciaDesc: '', comDesligamento: !!(f && /^s/i.test(String(f.desligar || ''))), odm: '', horaLiberacao: '', operadorLiberacao: '',
+           horaEntrega: '', operadorEntrega: '', areaSombra: '', equipamento: '', equipamentoTipo: '', fichaI: {}, fichaR: {} };
+}
+/* O diário da 5a não tinha a execução: ela nasce com o desligamento da folha do pacote. */
+function garantirExecucao(d) {
+  if (d.form.execucao) return;
+  d.form.execucao = execucaoNova(folhaDoPacote(pacoteDe(d.dia), d.codigo) || d.folha);
+}
+
+/* Um toque no dia. */
+function tocar(tipo) {
+  var info = diaAtual();
+  if (!info) return;
+  var r = diaDaEquipe(info.dia, info.prefixo), pac = pacoteDe(info.dia), L = (pac && pac.listas) || {};
+  if (diaTravado(info.dia, info.prefixo)) return;
+  var hora = ($('tqHora') || {}).value || '', km = String(($('tqKm') || {}).value || '').replace(/\D/g, ''), obra = ($('tqObra') || {}).value || '';
+  var motivo = ($('tqMotivo') || {}).value || '', obs = String(($('tqObs') || {}).value || '').trim(), ult = r.blocos[r.blocos.length - 1];
+  var erro = function (t) { E.aviso = { tipo: 'erro', texto: t }; desenhar(); var c = $('f-dia'); if (c && c.scrollIntoView) c.scrollIntoView({ block: 'start' }); };
+  if (minutos(hora) === null) return erro('A hora do registro (HH:MM).');
+  if (ult && minutos(hora) <= minutos(ult.ini)) return erro('A hora tem de ser depois de ' + ult.ini + ', o último registro.');
+  if (tipo === 'CHEGADA') {
+    if (!r.blocos.length) return erro('Registre antes a saída da base ("Saí · deslocando").');
+    if (!km) return erro('O km do hodômetro na chegada à base.');
+    r.chegada = hora; r.kmChegada = km; r.chegadaTocadaEm = new Date().toISOString();
+  } else {
+    if (!r.blocos.length && tipo !== 'DESLOC') return erro('O dia começa com "Saí · deslocando", na saída da base.');
+    if (!r.blocos.length && !km) return erro('O km do hodômetro na saída da base.');
+    if (tipo === 'SERVICO' && !obra) return erro('De qual obra é o serviço.');
+    if (tipo === 'PARADA' && !motivo) return erro('O motivo da parada.');
+    if (tipo === 'PARADA' && motivo === L.motivoOutro && !obs) return erro('Descreva o motivo da parada.');
+    if (!r.blocos.length) r.kmSaida = km;
+    r.blocos.push({ t: tipo, ini: hora, obra: tipo === 'ALMOCO' ? '' : obra, motivo: tipo === 'PARADA' ? motivo : '', obs: tipo === 'PARADA' ? obs : '', tocadoEm: new Date().toISOString() });
+  }
+  E.aviso = null;
+  return guardarDia(r).then(desenhar);
+}
+function desfazerToque() {
+  var info = diaAtual(); if (!info || diaTravado(info.dia, info.prefixo)) return;
+  var r = diaDaEquipe(info.dia, info.prefixo);
+  if (r.chegada) { r.chegada = ''; r.kmChegada = ''; }
+  else { r.blocos.pop(); if (!r.blocos.length) r.kmSaida = ''; }
+  return guardarDia(r).then(desenhar);
+}
+/* Corrigir a hora de um registro (ou da chegada): entre o anterior e o seguinte. */
+function corrigirHora(i, valor) {
+  var info = diaAtual(); if (!info || diaTravado(info.dia, info.prefixo)) return;
+  var r = diaDaEquipe(info.dia, info.prefixo), m = minutos(valor);
+  /* A mesma hora de antes não é correção: o campo redesenhado depois de uma hora recusada pode avisar
+     "mudou" com o valor antigo, e isso apagava o aviso da recusa (visto na bateria em 13/10/2026). */
+  if (valor === (i === 'chegada' ? r.chegada : (r.blocos[i] || {}).ini)) return;
+  var antes = i === 'chegada' ? r.blocos[r.blocos.length - 1] : r.blocos[i - 1], depois = i === 'chegada' ? null : (r.blocos[i + 1] || (r.chegada ? { ini: r.chegada } : null));
+  if (m === null || (antes && m <= minutos(antes.ini)) || (depois && m >= minutos(depois.ini))) {
+    E.aviso = { tipo: 'erro', texto: 'A hora tem de ficar entre ' + (antes ? antes.ini : 'o começo do dia') + ' e ' + (depois ? depois.ini : 'o fim do dia') + '.' };
+    return desenhar();
+  }
+  if (i === 'chegada') r.chegada = valor; else { r.blocos[i].ini = valor; r.blocos[i].corrigidoEm = new Date().toISOString(); }
+  E.aviso = null;
+  return guardarDia(r).then(desenhar);
+}
+
+function cartaoDoDia(info) {
+  var r = diaDaEquipe(info.dia, info.prefixo), pac = pacoteDe(info.dia), R = regrasDe(pac), L = (pac && pac.listas) || {};
+  var trav = diaTravado(info.dia, info.prefixo), eqs = equipesDoDia(pac), ult = r.blocos[r.blocos.length - 1];
+  var h = '<div class="cartao" id="f-dia"><div class="etiqueta">O dia da equipe · ' + esc(info.prefixo) + ' · ' + esc(brDe(info.dia).slice(0, 5)) + '</div>' +
+    (eqs.length > 1 && !E.aberto ? '<select id="tqEquipe" aria-label="Equipe">' + opcoes(eqs, info.prefixo) + '</select>' : '');
+  if (!R || !R.horariosDoDiaApp) return h + '<div class="aviso atencao">O pacote deste dia é de uma versão antiga do sistema: baixe de novo (aba Hoje).</div></div>';
+  var hs = R.horariosDoDiaApp(retratoDoDia(r));
+  h += r.blocos.length ? '<ul class="lista registros">' + r.blocos.map(function (b, i) {
+    var dur = hs.registros[i] ? hs.registros[i].minutos : 0;
+    return '<li class="reg reg-' + b.t.toLowerCase() + '"><input type="time" data-bl="' + i + '" value="' + esc(b.ini) + '"' + (trav ? ' disabled' : '') + ' aria-label="Hora do registro ' + (i + 1) + '">' +
+      '<span><b>' + esc(nomeDoRegistro(b.t)) + '</b>' + (b.obra ? ' · ' + esc(rotuloDoAlvo(info.dia, info.prefixo, b.obra)) : '') + (b.motivo ? ' · ' + esc(b.motivo) + (b.obs ? ': ' + esc(b.obs) : '') : '') +
+      '<small>' + (i + 1 < r.blocos.length || r.chegada ? duracao(dur) : 'em andamento') + '</small></span></li>';
+  }).join('') + (r.chegada ? '<li class="reg reg-chegada"><input type="time" data-chegada="1" value="' + esc(r.chegada) + '"' + (trav ? ' disabled' : '') + ' aria-label="Hora da chegada"><span><b>Chegada à base</b><small>km ' + esc(r.kmSaida) + ' → ' + esc(r.kmChegada) + '</small></span></li>' : '') + '</ul>'
+    : '<p class="media">Nada registrado ainda. Ao sair da base, toque em <b>Saí · deslocando</b>.</p>';
+  if (trav) return h + '<div class="ajuda">O dia já foi encerrado: os horários não mudam mais.</div></div>';
+  if (!r.chegada) {
+    var obras = obrasDoDia(info.dia, info.prefixo), obraPadrao = ult && ult.obra ? ult.obra : E.aberto ? alvoDoDiario(E.aberto, R) : (obras[0] || [''])[0];
+    h += '<div class="toque"><div class="duas"><div><label for="tqHora">Hora</label><input id="tqHora" type="time" value="' + esc(horaAgora()) + '"></div>' +
+      '<div><label for="tqKm">Km do hodômetro</label><input id="tqKm" inputmode="numeric" maxlength="7" placeholder="' + (r.blocos.length ? 'na chegada' : 'na saída') + '" autocomplete="off"></div></div>' +
+      '<label for="tqObra">Obra</label><select id="tqObra">' + opcoes(obras, obraPadrao, obras.length ? undefined : 'Nenhuma obra no dia') + '</select>' +
+      '<label for="tqMotivo">Motivo, se for parada</label><select id="tqMotivo">' + opcoes(L.paradas || [], '', 'Escolha') + '</select>' +
+      '<input id="tqObs" placeholder="Descreva (se for &quot;Outro&quot;)" autocomplete="off" style="margin-top:6px">' +
+      '<div class="toques">' + [['DESLOC', 'Saí · deslocando'], ['SERVICO', 'Iniciei o serviço'], ['PARADA', 'Parada'], ['ALMOCO', 'Almoço']].map(function (t) {
+        return '<button type="button" class="btn medio' + (ult && ult.t === t[0] ? ' fantasma' : ' secundario') + '" data-toque="' + t[0] + '">' + t[1] + '</button>'; }).join('') +
+      '<button type="button" class="btn medio" data-toque="CHEGADA"' + (r.blocos.length ? '' : ' disabled') + '>Cheguei à base</button></div>' +
+      '<div class="ajuda">Cada toque fecha o registro anterior nessa hora e abre o próximo. Esqueceu de marcar? Troque a hora antes de tocar. A hora de cada registro pode ser corrigida até encerrar o dia.</div></div>';
+  }
+  if (r.blocos.length) h += '<button type="button" class="btn medio fantasma" data-acao="desfazerToque">' + (r.chegada ? 'Desfazer a chegada' : 'Desfazer o último registro') + '</button>';
+  if (r.chegada) h += '<div class="aviso ok" style="margin-top:8px">Dia registrado: ' + esc(hs.expIni) + ' às ' + esc(hs.expFim) + ' · serviço ' + esc(duracao(hs.minutos.SERVICO)) +
+    (hs.minutos.PARADA ? ' · paradas ' + esc(duracao(hs.minutos.PARADA)) : '') + '. Agora é encerrar (aba Encerrar).</div>';
+  return h + '</div>';
+}
+
 // ---------------------------------------------------------------- o diário
 function folhaDoPacote(pac, codigo) { return pac && codigo ? (pac.folhas || []).filter(function (f) { return f.codigo === codigo; })[0] || null : null; }
 function diarioDaFolha(dia, codigo) {
@@ -227,9 +420,9 @@ function processoPadrao(atividade, verso) {
 
 /*
  * Um diário novo para uma folha (ou em branco, para a emergência). O que é do
- * dia da equipe, e não da obra (placa, expediente, almoço, DDS, km e quem foi),
- * vem do outro diário da mesma equipe no mesmo dia: a equipe que faz duas
- * obras não preenche o cabeçalho duas vezes.
+ * dia da equipe e não da obra (placa, DDS e quem foi) vem do outro diário da
+ * mesma equipe no mesmo dia: a equipe que faz duas obras não preenche duas
+ * vezes. Os horários e o km vêm do dia em horários (5b).
  */
 function novoDiario(pac, f) {
   var prefixo = f ? f.p : ((pac.equipes || [])[0] || {}).p || '';
@@ -241,13 +434,13 @@ function novoDiario(pac, f) {
     dds: '', ddsHora: '', ddsQuem: '', contrato: (f && f.contrato) || pac.contratoPadrao || '',
     obra: f ? f.obra || '' : '', municipio: f ? f.municipio || '' : '', alim: f ? f.alm || '' : '', ponto: f ? f.ponto || '' : '',
     atividade: atividade, processo: processoPadrao(atividade, f && f.verso), processoMudado: false, status: '', ini: '', fim: '',
-    codigos: [{ cod: '', qtd: '', adc: '' }], hhExtra: '', hhAdc: '0,3', observacoes: ''
+    codigos: [{ cod: '', qtd: '', adc: '' }], hhExtra: '', hhAdc: '0,3', observacoes: '', execucao: execucaoNova(f)
   };
   var irmao = E.diarios.filter(function (d) { return d.dia === pac.dia && d.form && d.form.prefixo === prefixo; })
     .sort(function (a, b) { return a.mudadoEm < b.mudadoEm ? 1 : -1; })[0];
   if (irmao) {
     var y = irmao.form;
-    ['placa', 'expIni', 'expFim', 'almIni', 'almFim', 'kmSaida', 'kmChegada', 'dds', 'ddsHora', 'ddsQuem'].forEach(function (k) { if (y[k]) x[k] = y[k]; });
+    ['placa', 'dds', 'ddsHora', 'ddsQuem'].forEach(function (k) { if (y[k]) x[k] = y[k]; });
     var porMat = {};
     y.pessoas.forEach(function (p) { porMat[semZeros(p.mat)] = p; });
     x.pessoas.forEach(function (p) { var q = porMat[semZeros(p.mat)]; if (q) { p.estado = q.estado; delete porMat[semZeros(p.mat)]; } });
@@ -255,7 +448,7 @@ function novoDiario(pac, f) {
   }
   return {
     id: novoId(), dia: pac.dia, codigo: f ? f.codigo : '', extra: !f, estado: 'rascunho', criadoEm: new Date().toISOString(),
-    folha: f ? { codigo: f.codigo, p: f.p, obra: f.obra, municipio: f.municipio, verso: f.verso, hi: f.hi, hf: f.hf, servico: f.servico } : null,
+    folha: f ? { codigo: f.codigo, p: f.p, obra: f.obra, municipio: f.municipio, verso: f.verso, hi: f.hi, hf: f.hf, servico: f.servico, desligar: f.desligar, om: f.om } : null,
     form: x, fotos: { FRENTE: null, VERSO: null }, rosto: null, arquivos: {}, tentativas: 0
   };
 }
@@ -273,11 +466,14 @@ function salvarAgora() {
   return guardarDiario(d);
 }
 
+/* Os campos que saem do dia em horários: o erro deles se corrige nos toques, e não no diário. */
+var CAMPOS_DO_DIA = ['expIni', 'expFim', 'almIni', 'almFim', 'ini', 'fim', 'kmSaida', 'kmChegada', 'dia'];
+
 /*
- * As pendências que impedem encerrar: as regras do servidor (do pacote) e o
- * que só o celular sabe (quem ficou sem marcar, as fotos do papel, a folha já
- * lançada). avisos: o que não impede (impedido marcado "Foi": o papel manda, e
- * o DP confere, como no PS em papel).
+ * As pendências que impedem encerrar: as regras do servidor (do pacote: o PS,
+ * o dia em horários e a execução) e o que só o celular sabe (quem ficou sem
+ * marcar, as fotos do papel, a folha já lançada). avisos: o que não impede
+ * (impedido marcado "Foi": o papel manda, e o DP confere, como no PS em papel).
  */
 function conferirDiario(d) {
   var out = { erros: [], avisos: [], v: null };
@@ -285,26 +481,35 @@ function conferirDiario(d) {
   if (!pac) { out.erros.push({ campo: '', msg: 'O pacote de ' + brDe(d.dia) + ' não está no celular: conecte no Wi-Fi e baixe (aba Hoje).' }); return out; }
   var R = regrasDe(pac);
   if (!R || R.erro) { out.erros.push({ campo: '', msg: R ? R.erro : 'O pacote não trouxe as regras: baixe de novo.' }); return out; }
-  var val = R.validarLancamentoPS(pacoteDoDiario(d), contextoDe(pac));
+  if (!R.validarDiaDoApp) { out.erros.push({ campo: '', msg: 'O pacote deste dia é de uma versão antiga do sistema: baixe de novo (aba Hoje).' }); return out; }
+  aplicarDia(d);
+  var p = pacoteDoDiario(d), val = R.validarLancamentoPS(p, contextoDe(pac)), vistos = {};
   out.v = val.v;
-  out.erros = val.erros.slice();
+  var junta = function (e) {
+    var dia = CAMPOS_DO_DIA.indexOf(e.campo) >= 0, k = (dia ? 'dia' : e.campo) + '|' + e.msg;
+    if (vistos[k]) return; vistos[k] = 1;
+    out.erros.push({ campo: dia ? 'dia' : e.campo, msg: e.msg, doDia: dia });
+  };
+  /* Primeiro o dia: o erro de horário do PS quase sempre é falta de toque, e o do dia diz qual. */
+  R.validarDiaDoApp(retratoDoDia(diaDaEquipe(d.dia, d.form.prefixo)), p).forEach(junta);
+  val.erros.forEach(function (e) { if (CAMPOS_DO_DIA.indexOf(e.campo) < 0 || !out.erros.some(function (x) { return x.doDia; })) junta(e); });
   var x = d.form;
-  var semMarcar = x.pessoas.filter(function (p) { return p.estado !== 'foi' && p.estado !== 'faltou'; });
-  if (semMarcar.length) out.erros.push({ campo: 'pessoas', msg: 'Componentes: marque Foi ou Faltou em ' + semMarcar.map(function (p) { return p.nome || p.mat; }).join(', ') + '.' });
-  if (!d.fotos || !d.fotos.FRENTE || !d.fotos.VERSO) out.erros.push({ campo: 'fotos', msg: 'Fotos do PS: a frente e o verso do papel.' });
+  var semMarcar = x.pessoas.filter(function (q) { return q.estado !== 'foi' && q.estado !== 'faltou'; });
+  if (semMarcar.length) junta({ campo: 'pessoas', msg: 'Componentes: marque Foi ou Faltou em ' + semMarcar.map(function (q) { return q.nome || q.mat; }).join(', ') + '.' });
+  if (!d.fotos || !d.fotos.FRENTE || !d.fotos.VERSO) junta({ campo: 'fotos', msg: 'Fotos do PS: a frente e o verso do papel.' });
   if (val.v && val.v.prefixo) {
     var chave = R.chaveDoLancamentoPS(val.v.dia, val.v.prefixo, val.v.obra);
     var ja = (pac.lancados || []).filter(function (l) { return l.chave === chave && l.situacao !== 'DESFEITO'; })[0];
-    if (ja && !(d.resposta && d.resposta.chave === chave)) out.erros.push({ campo: 'obra', msg: 'Esta folha já foi lançada no sistema em ' + ja.quando + ' por ' + (ja.por || '?') + '. Se precisa corrigir, fale com o supervisor.' });
+    if (ja && !(d.resposta && d.resposta.chave === chave)) junta({ campo: 'obra', msg: 'Esta folha já foi lançada no sistema em ' + ja.quando + ' por ' + (ja.por || '?') + '. Se precisa corrigir, fale com o supervisor.' });
     var gemeo = E.diarios.filter(function (o) {
       if (o.id === d.id || ['encerrado', 'enviado'].indexOf(o.estado) < 0 || o.dia !== d.dia) return false;
       return R.chaveDoLancamentoPS(o.dia, String(o.form.prefixo || '').toUpperCase(), o.form.tipoDia === 'PLANTAO' ? '' : String(o.form.obra || '').toUpperCase().replace(/\s+/g, '')) === chave;
     })[0];
-    if (gemeo) out.erros.push({ campo: 'obra', msg: 'Já há outro diário encerrado neste celular para a mesma equipe e obra no dia.' });
+    if (gemeo) junta({ campo: 'obra', msg: 'Já há outro diário encerrado neste celular para a mesma equipe e obra no dia.' });
   }
-  x.pessoas.forEach(function (p) {
-    var imp = p.estado === 'foi' ? impedidoNoPacote(pac, p.mat) : null;
-    if (imp) out.avisos.push((p.nome || p.mat) + ' está impedido de ir a campo neste dia (' + imp.motivo + '). Se foi mesmo, encerre: o DP confere.');
+  x.pessoas.forEach(function (q) {
+    var imp = q.estado === 'foi' ? impedidoNoPacote(pac, q.mat) : null;
+    if (imp) out.avisos.push((q.nome || q.mat) + ' está impedido de ir a campo neste dia (' + imp.motivo + '). Se foi mesmo, encerre: o DP confere.');
   });
   var impEnc = impedidoNoPacote(pac, x.matEnc);
   if (impEnc) out.avisos.push('Você aparece como impedido de ir a campo neste dia (' + impEnc.motivo + '). Se trabalhou, encerre e avise o supervisor.');
@@ -396,6 +601,14 @@ function telaHoje() {
     '<button type="button" class="btn secundario medio" data-acao="baixar"' + (E.baixando || E.cfg.desligado ? ' disabled' : '') + '>' + (E.baixando ? 'Baixando…' : pac ? 'Baixar de novo' : 'Baixar o pacote do dia') + '</button></div>';
   if (!pac) return h + '<div class="aviso atencao">Sem o pacote, o app não sabe as folhas, a equipe nem os códigos do dia. Conecte no Wi-Fi da base (ou com sinal) e toque em "Baixar o pacote do dia". Depois, funciona sem sinal.</div>';
   (pac.avisos || []).forEach(function (a) { h += '<div class="aviso atencao">' + esc(a) + '</div>'; });
+  /* 5b: onde o dia da equipe está agora, e o atalho para registrar. */
+  var info = diaAtual();
+  if (info && info.dia === dia) {
+    var rd = diaDaEquipe(info.dia, info.prefixo), ub = rd.blocos[rd.blocos.length - 1];
+    h += '<div class="cartao"><div class="etiqueta">O dia da equipe · ' + esc(info.prefixo) + '</div><div>' +
+      (rd.chegada ? 'Chegou à base às <b>' + esc(rd.chegada) + '</b>.' : ub ? '<b>' + esc(nomeDoRegistro(ub.t)) + '</b> desde ' + esc(ub.ini) + (ub.obra ? ' · ' + esc(rotuloDoAlvo(info.dia, info.prefixo, ub.obra)) : '') + '.' : 'Ainda não saiu da base.') +
+      '</div><button type="button" class="btn medio" data-aba-ir="diario">Registrar no dia</button></div>';
+  }
   var R = regrasDe(pac), chaves = {};
   (pac.lancados || []).forEach(function (l) { chaves[l.chave] = l; });
   h += '<div class="etiqueta" style="margin:6px 2px 0">Folhas de ' + esc(brDe(dia)) + '</div>';
@@ -454,9 +667,8 @@ function opcoes(lista, atual, vazio) {
 function seg(nome, lista, atual, classe) {
   return '<div class="seg ' + (classe || '') + '">' + lista.map(function (t) { return '<button type="button" data-' + nome + '="' + t[0] + '" data-v="' + t[0] + '" class="' + (atual === t[0] ? 'ativo' : '') + '">' + esc(t[1]) + '</button>'; }).join('') + '</div>';
 }
-/* AS HORAS UMA EMBAIXO DA OUTRA, na ordem do dia (saída, almoço, chegada): em duas
-   colunas, o campo de hora com o botão "agora" não cabia na tela do celular
-   (390 px, visto na bateria em 13/10/2026). */
+/* AS HORAS UMA EMBAIXO DA OUTRA: em duas colunas, o campo de hora com o botão
+   "agora" não cabia na tela do celular (390 px, visto na bateria em 13/10/2026). */
 function campoHora(campo, rotulo, x, dica) {
   return '<div id="f-' + campo + '"><label for="i-' + campo + '">' + esc(rotulo) + '</label><div class="hora"><input id="i-' + campo + '" type="time" data-f="' + campo + '" value="' + esc(x[campo]) + '">' +
     '<button type="button" class="btn fantasma" data-agora="' + campo + '">agora</button></div>' + (dica ? '<div class="ajuda">' + dica + '</div>' : '') + '</div>';
@@ -471,22 +683,33 @@ function horasHH(x) {
   return (Math.round(m / 60 * 100) / 100).toLocaleString('pt-BR') + ' h';
 }
 
+/* As folhas do dia da equipe, para abrir (a programação e as sem programação). */
+function listaDeFolhas(info) {
+  var pac = pacoteDe(info.dia), h = '';
+  (pac ? pac.folhas || [] : []).filter(function (f) { return String(f.p).toUpperCase() === info.prefixo; }).forEach(function (f) {
+    var d = diarioDaFolha(info.dia, f.codigo);
+    h += '<li><a href="#" data-abrir-folha="' + esc(f.codigo) + '"><b>obra ' + esc(f.obra || '—') + '</b> · ' + esc(f.municipio || '') + '</a> ' +
+      (d ? '<span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span>' : '<span class="chip">não começada</span>') + '</li>';
+  });
+  diariosDoDia(info.dia, info.prefixo).filter(function (d) { return d.extra; }).forEach(function (d) {
+    h += '<li><a href="#" data-abrir-diario="' + esc(d.id) + '"><b>' + esc(d.form.obra ? 'obra ' + d.form.obra : d.form.tipoDia === 'PLANTAO' ? 'plantão' : 'sem obra') + '</b> · sem programação</a> <span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span></li>';
+  });
+  return h ? '<div class="cartao"><div class="etiqueta">As folhas do dia</div><ul class="lista">' + h + '</ul></div>' : '';
+}
+
 function telaDiario() {
-  var d = E.aberto;
-  if (!d) {
-    var abertos = E.diarios.filter(function (o) { return o.estado === 'rascunho'; });
-    return '<div class="cartao">Nenhum diário aberto. Escolha a folha na aba <b>Hoje</b>.</div>' + abertos.map(function (o) {
-      return '<div class="cartao folha"><div class="linha1"><b>' + esc(o.form.prefixo) + '</b> · ' + esc(o.form.obra || 'sem obra') + ' · ' + esc(brDe(o.dia)) + ' <span class="chip rascunho">Rascunho</span></div>' +
-        '<button type="button" class="btn medio secundario" data-abrir-diario="' + esc(o.id) + '">Continuar</button></div>'; }).join('');
-  }
-  if (d.estado !== 'rascunho') return '<div class="cartao">Este diário está <span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span>. Veja na aba <b>Encerrar</b>.<button type="button" class="btn medio secundario" data-aba-ir="encerrar">Ir para Encerrar</button></div>';
+  var d = E.aberto, info = diaAtual();
+  if (!info) return '<div class="cartao">Sem o pacote do dia, não há equipe nem folhas. Baixe o pacote na aba <b>Hoje</b>.</div>';
+  var h = cartaoDoDia(info);
+  if (!d) return h + listaDeFolhas(info) + '<div class="ajuda" style="text-align:center">Toque numa folha para preencher o PS dela.</div>';
+  if (d.estado !== 'rascunho') return h + '<div class="cartao">Este diário está <span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span>. Veja na aba <b>Encerrar</b>.<button type="button" class="btn medio secundario" data-aba-ir="encerrar">Ir para Encerrar</button></div>' + listaDeFolhas(info);
   var pac = pacoteDe(d.dia);
-  if (!pac) return '<div class="aviso atencao">O pacote de ' + esc(brDe(d.dia)) + ' não está no celular. Baixe na aba Hoje.</div>';
+  if (!pac) return h + '<div class="aviso atencao">O pacote de ' + esc(brDe(d.dia)) + ' não está no celular. Baixe na aba Hoje.</div>';
+  aplicarDia(d);
   var x = d.form, L = pac.listas || {}, f = d.folha, prod = x.tipoDia === 'PRODUCAO', hh = x.tipoDia === 'HH', plantao = x.tipoDia === 'PLANTAO';
-  var h = '';
   if (d.errosServidor && d.errosServidor.length) h += '<div class="aviso erro"><b>O servidor recusou este diário:</b><ul>' + d.errosServidor.map(function (e) { return '<li>' + esc(e.msg) + '</li>'; }).join('') + '</ul></div>';
 
-  /* 1. a folha e o dia */
+  /* 1. a folha */
   h += '<div class="cartao"><div class="etiqueta">' + (f ? 'Folha ' + esc(f.codigo) : 'Folha sem programação') + ' · ' + esc(brDe(d.dia)) + '</div>' +
     '<div><b>' + esc(E.cfg.nome) + '</b> <span class="fraco">· encarregado · ' + esc(E.cfg.mat) + '</span></div>' +
     '<div id="f-prefixo">' + (f ? '<div class="media">Equipe <b>' + esc(x.prefixo) + '</b></div>' :
@@ -495,10 +718,13 @@ function telaDiario() {
     '<div id="f-tipoDia"><label>Como foi o dia</label>' + seg('tipo', [['PRODUCAO', 'Produção'], ['PLANTAO', 'Plantão'], ['HH', 'Homem-hora']], x.tipoDia) +
     '<div class="ajuda">' + esc(plantao ? 'Plantão sem acionamento: a equipe ficou de prontidão e não foi acionada.' : hh ? 'À disposição do cliente: grava as horas do expediente, sem o almoço.' : 'Produção: os serviços do verso do PS.') + '</div></div></div>';
 
-  /* 2. horários e km */
-  h += '<div class="cartao"><div class="etiqueta">Expediente e km</div>' +
-    campoHora('expIni', 'Saída (início do expediente)', x) + campoHora('almIni', 'Almoço, início', x) + campoHora('almFim', 'Almoço, término', x) + campoHora('expFim', 'Chegada (término do expediente)', x) +
-    '<div class="duas"><div>' + campoTexto('kmSaida', 'KM saída da base', x, ' inputmode="numeric" maxlength="7"') + '</div><div>' + campoTexto('kmChegada', 'KM chegada no canteiro', x, ' inputmode="numeric" maxlength="7"') + '</div></div></div>';
+  /* 2. os horários, que saem do dia */
+  h += '<div class="cartao"><div class="etiqueta">Horários desta folha</div><dl class="resumo">' +
+    '<dt>Expediente</dt><dd>' + esc(x.expIni && x.expFim ? x.expIni + ' às ' + x.expFim : '—') + '</dd>' +
+    '<dt>Almoço</dt><dd>' + esc(x.almIni ? x.almIni + ' às ' + x.almFim : 'sem almoço') + '</dd>' +
+    (prod ? '<dt>Atividades</dt><dd>' + esc(x.ini ? x.ini + ' às ' + x.fim : '— (falta "Iniciei o serviço" nesta obra)') + '</dd>' : '') +
+    '<dt>Km</dt><dd>' + esc(x.kmSaida ? x.kmSaida + (x.kmChegada ? ' → ' + x.kmChegada : '') : '—') + '</dd></dl>' +
+    '<div class="ajuda">Saem do dia em horários, lá em cima: para mudar, corrija os registros do dia.</div></div>';
 
   /* 3. componentes */
   var naLista = {}; x.pessoas.forEach(function (p) { naLista[semZeros(p.mat)] = 1; }); naLista[semZeros(E.cfg.mat)] = 1;
@@ -526,12 +752,14 @@ function telaDiario() {
       '<div class="duas"><div id="f-atividade"><label for="i-atividade">Atividade</label><select id="i-atividade" data-f="atividade">' + opcoes(L.atividades || [], x.atividade) + '</select></div>' +
       '<div id="f-processo"><label for="i-processo">Processo</label><select id="i-processo" data-f="processo">' + opcoes(L.processos || [], x.processo) + '</select></div></div>';
     if (prod) h += '<div id="f-status"><label for="i-status">Status (como está no papel)</label><select id="i-status" data-f="status" data-redesenha="1">' +
-        opcoes((L.status || []).map(function (s) { return [s, STATUS_DO_PAPEL[s] || s]; }), x.status, 'Escolha') + '</select></div>' +
-      campoHora('ini', 'Início das atividades', x, f && f.hi ? 'Programado: ' + esc(f.hi) : '') + campoHora('fim', 'Término das atividades', x, f && f.hf ? 'Programado: ' + esc(f.hf) : '');
+        opcoes((L.status || []).map(function (s) { return [s, STATUS_DO_PAPEL[s] || s]; }), x.status, 'Escolha') + '</select></div>';
     h += '</div>';
   }
 
-  /* 6. contrato e códigos */
+  /* 6. a execução (5b): o que só quem estava lá sabe */
+  if (prod) h += cartaoDaExecucao(d, pac);
+
+  /* 7. contrato e códigos */
   h += '<div class="cartao"><div class="etiqueta">' + (prod ? 'Os serviços do verso' : 'O código do dia') + '</div>' +
     '<div id="f-contrato"><label for="i-contrato">Contrato e reajuste</label><select id="i-contrato" data-f="contrato" data-redesenha="1">' + opcoes(pac.contratos || [], x.contrato, 'Escolha') + '</select></div>';
   if (prod) {
@@ -556,15 +784,46 @@ function telaDiario() {
   }
   h += '</div>';
 
-  /* 7. observações e fotos do papel */
+  /* 8. observações e fotos do papel */
   h += '<div class="cartao"><div class="etiqueta">Observações e as fotos do PS</div><div id="f-observacoes"><textarea data-f="observacoes" maxlength="500" placeholder="Observações (opcional)">' + esc(x.observacoes) + '</textarea></div>' +
     '<div id="f-fotos" class="fotos" style="margin-top:10px">' + ['FRENTE', 'VERSO'].map(function (l) {
       var id = d.fotos && d.fotos[l];
       return '<label class="foto' + (id ? ' ok' : '') + '">' + (id ? '<img alt="" data-foto-id="' + esc(id) + '"><span>' + (l === 'FRENTE' ? 'Frente' : 'Verso') + ' ✓ · tocar para trocar</span>' : '<b>📷 ' + (l === 'FRENTE' ? 'Frente' : 'Verso') + ' do PS</b><span>tocar para fotografar</span>') +
         '<input type="file" accept="image/*" capture="environment" data-foto="' + l + '"></label>';
     }).join('') + '</div><div id="estadoFoto" class="ajuda"></div></div>';
-  h += '<button type="button" class="btn" data-aba-ir="encerrar">Conferir e encerrar</button>';
+  h += '<button type="button" class="btn" data-aba-ir="encerrar">Conferir e encerrar o dia</button>';
   return h;
+}
+
+/* A execução da obra (conceito, 15.3): pendência, desligamento com o COD, equipamento com a ficha. */
+function cartaoDaExecucao(d, pac) {
+  var x = d.form.execucao, L = pac.listas || {}, R = regrasDe(pac);
+  var sx = function (campo, lista) { return '<div class="seg">' + lista.map(function (v) { return '<button type="button" data-xs="' + campo + '" data-v="' + esc(v) + '" class="' + (x[campo] === v ? 'ativo' : '') + '">' + esc(v) + '</button>'; }).join('') + '</div>'; };
+  var tx = function (campo, rotulo, extra) { return '<div id="f-' + campo + '"><label for="x-' + campo + '">' + esc(rotulo) + '</label><input id="x-' + campo + '" data-x="' + campo + '" value="' + esc(x[campo]) + '" autocomplete="off"' + (extra || '') + '></div>'; };
+  var h = '<div class="cartao" id="f-execucao"><div class="etiqueta">A execução da obra</div>' +
+    '<div id="f-pendencia"><label>Ficou pendência na obra?</label>' + sx('pendencia', ['Sim', 'Não']) +
+    (x.pendencia === 'Sim' ? '<textarea data-x="pendenciaDesc" maxlength="300" placeholder="O que ficou pendente" style="margin-top:6px">' + esc(x.pendenciaDesc) + '</textarea>' : '') + '</div>';
+  if (x.comDesligamento) {
+    var r = diaDaEquipe(d.dia, d.form.prefixo), espera = 0;
+    if (R && R.horariosDoDiaApp) espera = R.horariosDoDiaApp(retratoDoDia(r)).esperaCOD[alvoDoDiario(d, R)] || 0;
+    h += '<div class="etiqueta" style="margin-top:12px">Desligamento · COD' + (d.folha && d.folha.om ? ' <span class="fraco">(programado: ' + esc(d.folha.om) + ')</span>' : '') + '</div>' +
+      tx('odm', 'Número da ODM') +
+      '<div class="duas"><div>' + tx('horaLiberacao', 'Hora da liberação', ' type="time"') + '</div><div>' + tx('operadorLiberacao', 'Operador da liberação') + '</div></div>' +
+      '<div class="duas"><div>' + tx('horaEntrega', 'Hora da entrega', ' type="time"') + '</div><div>' + tx('operadorEntrega', 'Operador da entrega') + '</div></div>' +
+      '<div class="ajuda">Espera do operador: <b>' + esc(R && R.faixaDaEsperaCOD ? R.faixaDaEsperaCOD(espera) : '—') + '</b>' + (espera ? ' (' + espera + ' min)' : '') + '. Sai sozinha da parada "' + esc(L.motivoCOD || 'COD') + '" nesta obra.</div>' +
+      '<div id="f-areaSombra"><label>Área de sombra?</label>' + sx('areaSombra', ['Sim', 'Não']) + '</div>';
+  }
+  h += '<div id="f-equipamento"><div class="etiqueta" style="margin-top:12px">Equipamento</div>' + sx('equipamento', L.equipamento || []) +
+    (x.equipamento && x.equipamento !== 'Nenhum' ? '<label>Qual equipamento?</label><select data-x="equipamentoTipo" data-redesenha="1">' + opcoes(L.equipamentos || [], x.equipamentoTipo, 'Escolha') + '</select>' : '');
+  [['I', 'Instalado', 'fichaI'], ['R', 'Retirado', 'fichaR']].forEach(function (l) {
+    if (!x.equipamento || x.equipamento === 'Nenhum' || (l[0] === 'I' && x.equipamento === 'Retirado') || (l[0] === 'R' && x.equipamento === 'Instalado')) return;
+    var fx = x[l[2]] || {};
+    h += '<div class="etiqueta" style="margin-top:10px">Ficha do ' + l[1].toLowerCase() + '</div><div class="duas">' + (L.ficha || []).map(function (c) {
+      var obr = (L.fichaObrigatoria || []).indexOf(c) >= 0;
+      return '<div><label>' + esc(c) + (obr ? '' : ' <span class="fraco">(se tiver)</span>') + '</label><input data-ficha="' + l[2] + '|' + esc(c) + '" value="' + esc(fx[c] || '') + '" autocomplete="off"></div>';
+    }).join('') + '</div>';
+  });
+  return h + '</div></div>';
 }
 
 function itensDaBusca(pac, termo, verso) {
@@ -577,69 +836,106 @@ function itensDaBusca(pac, termo, verso) {
 }
 
 // ---- Encerrar (OPE-16)
-function telaEncerrar() {
-  var d = E.aberto;
-  if (!d) return '<div class="cartao">Nenhum diário aberto. Escolha a folha na aba <b>Hoje</b>.</div>';
-  var x = d.form, h = '<div class="cartao"><div class="etiqueta">' + (d.folha ? 'Folha ' + esc(d.folha.codigo) : 'Folha sem programação') + ' · ' + esc(brDe(d.dia)) + '</div>' +
-    '<div class="linha1"><b>' + esc(x.prefixo || '—') + '</b> · ' + esc(x.tipoDia === 'PLANTAO' ? 'plantão' : 'obra ' + (x.obra || '—')) + ' <span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span></div></div>';
+/* O nome curto de uma folha nas listas. */
+function nomeDaFolha(d) { return d.form.tipoDia === 'PLANTAO' ? 'plantão' : d.form.obra ? 'obra ' + d.form.obra : 'folha sem obra'; }
 
-  if (d.estado === 'rascunho') {
-    var c = conferirDiario(d);
-    if (c.erros.length) {
-      h += '<div class="aviso erro"><b>' + c.erros.length + ' pendência(s) antes de encerrar.</b> Toque numa para ir até ela.<ul>' +
-        c.erros.map(function (e) { return '<li><a href="#" data-ir="' + esc(e.campo) + '">' + esc(e.msg) + '</a></li>'; }).join('') + '</ul></div>';
+/*
+ * ENCERRA-SE O DIA, E NÃO A FOLHA (5b): os horários das folhas saem do mesmo
+ * dia, então as folhas do dia encerram juntas, com uma foto do rosto só.
+ */
+function telaEncerrar() {
+  var info = diaAtual();
+  if (!info) return '<div class="cartao">Sem o pacote do dia, não há o que encerrar. Baixe o pacote na aba <b>Hoje</b>.</div>';
+  var doDia = diariosDoDia(info.dia, info.prefixo), rasc = doDia.filter(function (d) { return d.estado === 'rascunho'; });
+  var pac = pacoteDe(info.dia), R = regrasDe(pac), r = diaDaEquipe(info.dia, info.prefixo);
+  var h = '<div class="cartao"><div class="etiqueta">O dia da equipe · ' + esc(info.prefixo) + ' · ' + esc(brDe(info.dia)) + '</div>';
+  if (R && R.horariosDoDiaApp && r.blocos.length) {
+    var hs = R.horariosDoDiaApp(retratoDoDia(r));
+    h += '<dl class="resumo"><dt>Expediente</dt><dd>' + esc(hs.expIni) + ' às ' + esc(hs.expFim || '…') + '</dd><dt>Serviço</dt><dd>' + esc(duracao(hs.minutos.SERVICO)) + '</dd>' +
+      '<dt>Deslocamento</dt><dd>' + esc(duracao(hs.minutos.DESLOC)) + '</dd>' + (hs.minutos.PARADA ? '<dt>Paradas</dt><dd>' + esc(duracao(hs.minutos.PARADA)) + '</dd>' : '') +
+      '<dt>Km</dt><dd>' + esc(r.kmSaida + (r.kmChegada ? ' → ' + r.kmChegada : '')) + '</dd></dl>';
+  } else h += '<p class="media">Nada registrado no dia ainda (aba Diário).</p>';
+  h += '</div>';
+
+  if (rasc.length) {
+    var gerais = [], porFolha = [], avisos = [], visto = {};
+    rasc.forEach(function (d) {
+      var c = conferirDiario(d), proprios = [];
+      c.erros.forEach(function (e) { if (e.doDia || e.campo === '') { if (!visto[e.msg]) { visto[e.msg] = 1; gerais.push(e); } } else proprios.push(e); });
+      if (proprios.length) porFolha.push({ d: d, erros: proprios });
+      c.avisos.forEach(function (a) { if (avisos.indexOf(a) < 0) avisos.push(a); });
+    });
+    /* A folha da programação que ninguém começou: se a equipe não foi, tudo bem; se foi, falta o PS dela. */
+    (pac ? pac.folhas || [] : []).filter(function (f) { return String(f.p).toUpperCase() === info.prefixo && !diarioDaFolha(info.dia, f.codigo); }).forEach(function (f) {
+      avisos.push('A folha da obra ' + (f.obra || '?') + ' não foi começada. Se a equipe não foi a essa obra, pode encerrar; se foi, preencha o PS dela antes.');
+    });
+    var n = gerais.length + porFolha.reduce(function (s, x) { return s + x.erros.length; }, 0);
+    if (n) {
+      h += '<div class="aviso erro"><b>' + n + ' pendência(s) antes de encerrar.</b> Toque numa para ir até ela.' +
+        (gerais.length ? '<div style="margin-top:6px"><b>O dia</b></div><ul>' + gerais.map(function (e) { return '<li><a href="#" data-ir="dia">' + esc(e.msg) + '</a></li>'; }).join('') + '</ul>' : '') +
+        porFolha.map(function (x) {
+          return '<div style="margin-top:6px"><b>' + esc(nomeDaFolha(x.d)) + '</b></div><ul>' + x.erros.map(function (e) {
+            return '<li><a href="#" data-ir="' + esc(e.campo) + '" data-diario="' + esc(x.d.id) + '">' + esc(e.msg) + '</a></li>'; }).join('') + '</ul>';
+        }).join('') + '</div>';
     }
-    c.avisos.forEach(function (a) { h += '<div class="aviso atencao">' + esc(a) + '</div>'; });
-    if (!c.erros.length) {
-      var foram = x.pessoas.filter(function (p) { return p.estado === 'foi'; }), faltaram = x.pessoas.filter(function (p) { return p.estado === 'faltou'; });
-      var v = c.v || {};
-      h += '<div class="cartao"><div class="etiqueta">Confira antes de assinar</div><dl class="resumo">' +
-        '<dt>Dia</dt><dd>' + esc(NOME_DO_TIPO_DIA[x.tipoDia]) + '</dd><dt>Placa</dt><dd>' + esc(v.placa) + '</dd>' +
-        '<dt>Expediente</dt><dd>' + esc(v.expIni + ' às ' + v.expFim) + (v.almIni ? ' · almoço ' + esc(v.almIni + '–' + v.almFim) : '') + '</dd>' +
-        '<dt>Foram</dt><dd>' + (foram.length + 1) + ' (com você)</dd>' + (faltaram.length ? '<dt>Faltaram</dt><dd>' + esc(faltaram.map(function (p) { return p.nome || p.mat; }).join(', ')) + '</dd>' : '') +
-        (x.tipoDia !== 'PLANTAO' ? '<dt>Atividades</dt><dd>' + esc(v.ini ? v.ini + ' às ' + v.fim : '—') + '</dd>' : '') +
-        '<dt>Códigos</dt><dd>' + esc((v.codigos || []).map(function (k) { return k.cod + ' × ' + String(k.qtd).replace('.', ',') + (k.adc ? ' (+' + Math.round(k.adc * 100) + '%)' : ''); }).join('; ')) + '</dd></dl></div>' +
-        '<div class="cartao"><div class="etiqueta">Assinar com a foto do rosto</div><p class="media">A foto do seu rosto é a assinatura do dia: mostra que foi você quem encerrou. Ela vai para uma pasta separada e não aparece no book.</p>' +
-        '<label class="btn" style="position:relative">Encerrar e assinar com a foto do rosto<input type="file" accept="image/*" capture="user" data-rosto="1" style="position:absolute;inset:0;opacity:0"></label><div id="estadoRosto" class="ajuda"></div></div>';
+    avisos.forEach(function (a) { h += '<div class="aviso atencao">' + esc(a) + '</div>'; });
+    if (!n) {
+      h += '<div class="cartao"><div class="etiqueta">Confira antes de assinar</div>' + rasc.map(function (d) {
+        var c = conferirDiario(d), v = c.v || {}, x = d.form, foram = x.pessoas.filter(function (p) { return p.estado === 'foi'; }), faltaram = x.pessoas.filter(function (p) { return p.estado === 'faltou'; });
+        return '<div class="folha-resumo"><b>' + esc(nomeDaFolha(d)) + '</b><dl class="resumo">' +
+          '<dt>Dia</dt><dd>' + esc(NOME_DO_TIPO_DIA[x.tipoDia]) + '</dd><dt>Placa</dt><dd>' + esc(v.placa) + '</dd>' +
+          '<dt>Expediente</dt><dd>' + esc(v.expIni + ' às ' + v.expFim) + (v.almIni ? ' · almoço ' + esc(v.almIni + '–' + v.almFim) : '') + '</dd>' +
+          '<dt>Foram</dt><dd>' + (foram.length + 1) + ' (com você)</dd>' + (faltaram.length ? '<dt>Faltaram</dt><dd>' + esc(faltaram.map(function (p) { return p.nome || p.mat; }).join(', ')) + '</dd>' : '') +
+          (x.tipoDia === 'PRODUCAO' ? '<dt>Atividades</dt><dd>' + esc(v.ini ? v.ini + ' às ' + v.fim : '—') + '</dd><dt>Pendência</dt><dd>' + esc(x.execucao.pendencia) + '</dd>' : '') +
+          '<dt>Códigos</dt><dd>' + esc((v.codigos || []).map(function (k) { return k.cod + ' × ' + String(k.qtd).replace('.', ',') + (k.adc ? ' (+' + Math.round(k.adc * 100) + '%)' : ''); }).join('; ')) + '</dd></dl></div>';
+      }).join('') + '</div>' +
+        '<div class="cartao"><div class="etiqueta">Assinar com a foto do rosto</div><p class="media">A foto do seu rosto é a assinatura do dia: mostra que foi você quem encerrou. Ela vai para uma pasta separada e não aparece no book.' +
+        (rasc.length > 1 ? ' Encerra as ' + rasc.length + ' folhas do dia de uma vez.' : '') + '</p>' +
+        '<label class="btn" style="position:relative">Encerrar o dia e assinar com a foto do rosto<input type="file" accept="image/*" capture="user" data-rosto="1" style="position:absolute;inset:0;opacity:0"></label><div id="estadoRosto" class="ajuda"></div></div>';
     }
     h += '<button type="button" class="btn fantasma" data-aba-ir="diario">Voltar ao diário</button>';
-    return h;
-  }
+  } else if (!doDia.length) h += '<div class="cartao media">Nenhuma folha começada neste dia. Comece pela aba Diário.</div>';
 
-  if (d.rosto) h += '<div class="cartao"><div class="etiqueta">Assinado</div><div class="fotos"><div class="foto ok"><img alt="" data-foto-id="' + esc(d.rosto) + '"></div><div class="media">Encerrado em ' + esc(horaDeIso(d.encerradoEm)) + '.' + (d.enviadoEm ? '<br>Enviado em ' + esc(horaDeIso(d.enviadoEm)) + '.' : '') + '</div></div></div>';
-  if (d.estado === 'encerrado') {
-    h += '<div class="aviso">Na fila para enviar. ' + (navigator.onLine ? 'Com sinal: o envio sai sozinho.' : 'Sem sinal agora: o app envia sozinho quando o sinal voltar, mesmo fechado (no Android).') + '</div>' +
-      (d.ultimoErro ? '<div class="aviso atencao">Última tentativa: ' + esc(d.ultimoErro) + '</div>' : '') +
-      '<button type="button" class="btn" data-acao="enviar"' + (E.enviando ? ' disabled' : '') + '>' + (E.enviando ? 'Enviando…' : 'Enviar agora') + '</button>' +
-      '<button type="button" class="btn fantasma" data-acao="corrigir">Corrigir antes de enviar</button>';
-  } else if (d.estado === 'enviado') {
-    var r = d.resposta || {};
-    h += '<div class="aviso ok"><b>Recebido pelo sistema.</b>' + (r.duplicado ? ' (Já tinha chegado antes; nada foi gravado duas vezes.)' : '') + (r.situacao ? ' Situação: ' + esc(r.situacao) + '.' : '') + '</div>' +
-      (r.avisos && r.avisos.length ? '<div class="aviso atencao"><ul>' + r.avisos.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul></div>' : '');
-  } else if (d.estado === 'recusado') {
-    h += '<div class="aviso erro"><b>O servidor recusou.</b><ul>' + ((d.resposta && d.resposta.erros) || []).map(function (e) { return '<li>' + esc(e.msg) + '</li>'; }).join('') + '</ul></div>' +
-      '<button type="button" class="btn" data-acao="corrigir">Corrigir e encerrar de novo</button>';
-  } else if (d.estado === 'jaLancado') {
-    h += '<div class="aviso erro">' + esc(d.ultimoErro || 'Esta folha já tinha sido lançada.') + '</div>' +
-      '<button type="button" class="btn fantasma" data-acao="apagar">Tirar este diário do celular</button>';
-  }
+  var outros = doDia.filter(function (d) { return d.estado !== 'rascunho'; });
+  var encerrados = outros.filter(function (d) { return d.estado === 'encerrado'; });
+  outros.forEach(function (d) {
+    var rr = d.resposta || {};
+    h += '<div class="cartao"><div class="linha1"><b>' + esc(nomeDaFolha(d)) + '</b> <span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span></div>';
+    if (d.rosto && d.estado !== 'jaLancado') h += '<div class="fotos" style="margin-top:6px"><div class="foto ok"><img alt="" data-foto-id="' + esc(d.rosto) + '"></div><div class="media">Encerrado em ' + esc(horaDeIso(d.encerradoEm)) + '.' + (d.enviadoEm ? '<br>Enviado em ' + esc(horaDeIso(d.enviadoEm)) + '.' : '') + '</div></div>';
+    if (d.estado === 'encerrado') h += (d.ultimoErro ? '<div class="aviso atencao">Última tentativa: ' + esc(d.ultimoErro) + '</div>' : '<div class="ajuda">Na fila para enviar. ' + (navigator.onLine ? 'Com sinal: sai sozinho.' : 'Sem sinal agora: sai sozinho quando o sinal voltar, mesmo com o app fechado (no Android).') + '</div>');
+    else if (d.estado === 'enviado') h += '<div class="aviso ok"><b>Recebido pelo sistema.</b>' + (rr.duplicado ? ' (Já tinha chegado antes; nada foi gravado duas vezes.)' : '') + (rr.situacao ? ' Situação: ' + esc(rr.situacao) + '.' : '') + '</div>' +
+      (rr.avisos && rr.avisos.length ? '<div class="aviso atencao"><ul>' + rr.avisos.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul></div>' : '');
+    else if (d.estado === 'recusado') h += '<div class="aviso erro"><b>O servidor recusou.</b><ul>' + (rr.erros || []).map(function (e) { return '<li>' + esc(e.msg) + '</li>'; }).join('') + '</ul></div>' +
+      '<button type="button" class="btn" data-acao="corrigir" data-diario="' + esc(d.id) + '">Corrigir e encerrar de novo</button>';
+    else if (d.estado === 'jaLancado') h += '<div class="aviso erro">' + esc(d.ultimoErro || 'Esta folha já tinha sido lançada.') + '</div>' +
+      '<button type="button" class="btn fantasma" data-acao="apagar" data-diario="' + esc(d.id) + '">Tirar este diário do celular</button>';
+    h += '</div>';
+  });
+  if (encerrados.length) h += '<button type="button" class="btn" data-acao="enviar"' + (E.enviando ? ' disabled' : '') + '>' + (E.enviando ? 'Enviando…' : 'Enviar agora') + '</button>' +
+    '<button type="button" class="btn fantasma" data-acao="corrigir" data-diario="' + esc(encerrados.map(function (d) { return d.id; }).join(',')) + '">Corrigir antes de enviar</button>';
   h += '<button type="button" class="btn fantasma" data-aba-ir="hoje">Voltar às folhas</button>';
   return h;
 }
 
-function encerrarComRosto(arquivo) {
-  var d = E.aberto;
-  if (!d || d.estado !== 'rascunho' || !arquivo) return;
-  var c = conferirDiario(d);
-  if (c.erros.length) { desenhar(); return; }
+/* Encerra as folhas em rascunho do dia, com uma foto do rosto só. */
+function encerrarODia(arquivo) {
+  var info = diaAtual();
+  if (!info || !arquivo) return;
+  var rasc = diariosDoDia(info.dia, info.prefixo).filter(function (d) { return d.estado === 'rascunho'; });
+  if (!rasc.length || rasc.some(function (d) { return conferirDiario(d).erros.length; })) { desenhar(); return; }
   $('estadoRosto').textContent = 'preparando a foto…';
-  var linhas = [new Date().toLocaleString('pt-BR'), E.cfg.nome + ' · ' + E.cfg.mat, 'encerrou ' + d.form.prefixo + ' · ' + brDe(d.dia)];
-  processarFoto(arquivo, LADOS_FOTO_ROSTO, TETO_FOTO_ROSTO, linhas).then(function (r) {
+  var r = diaDaEquipe(info.dia, info.prefixo), retrato = retratoDoDia(r), quando = new Date().toISOString();
+  var linhas = [new Date().toLocaleString('pt-BR'), E.cfg.nome + ' · ' + E.cfg.mat, 'encerrou ' + info.prefixo + ' · ' + brDe(info.dia)];
+  processarFoto(arquivo, LADOS_FOTO_ROSTO, TETO_FOTO_ROSTO, linhas).then(function (ft) {
     var id = novoId();
-    return guardarFoto({ id: id, blob: r.blob, tipo: 'ROSTO', diario: d.id, criadoEm: new Date().toISOString() }).then(function () {
-      d.rosto = id; d.estado = 'encerrado'; d.encerradoEm = new Date().toISOString(); d.tentativas = 0; d.ultimoErro = ''; d.errosServidor = [];
-      if (d.arquivos) delete d.arquivos.ROSTO;
-      return guardarDiario(d);
+    return guardarFoto({ id: id, blob: ft.blob, tipo: 'ROSTO', diario: rasc[0].id, criadoEm: quando }).then(function () {
+      return Promise.all(rasc.map(function (d) {
+        aplicarDia(d);
+        d.rosto = id; d.estado = 'encerrado'; d.encerradoEm = quando; d.tentativas = 0; d.ultimoErro = ''; d.errosServidor = [];
+        d.diaEnviado = retrato;
+        if (d.arquivos) delete d.arquivos.ROSTO;
+        return guardarDiario(d);
+      }));
     });
   }).then(function () {
     pedirEnvioEmSegundoPlano();
@@ -648,21 +944,30 @@ function encerrarComRosto(arquivo) {
 }
 
 /*
- * Volta o diário a rascunho. DENTRO DA TRAVA DO ENVIO: se o segundo plano
- * estiver mandando este diário agora, corrigir no meio faria o servidor gravar
- * uma versão e o celular mostrar outra.
+ * Volta diários a rascunho. DENTRO DA TRAVA DO ENVIO: se o segundo plano
+ * estiver mandando um deles agora, corrigir no meio faria o servidor gravar uma
+ * versão e o celular mostrar outra. A foto do rosto é descartada: encerrar de
+ * novo pede outra.
  */
-function corrigir() {
-  var id = E.aberto && E.aberto.id;
-  if (!id) return;
+function corrigir(ids) {
+  if (!ids.length) return;
   var faz = function () {
-    return lerDiario(id).then(function (d) {
-      if (!d || ['encerrado', 'recusado'].indexOf(d.estado) < 0) return false;
-      var rosto = d.rosto;
-      d.errosServidor = d.estado === 'recusado' && d.resposta ? d.resposta.erros || [] : [];
-      d.estado = 'rascunho'; d.rosto = null; d.encerradoEm = null; d.ultimoErro = '';
-      if (d.arquivos) delete d.arquivos.ROSTO;
-      return guardarDiario(d).then(function () { return apagarFoto(rosto); }).then(function () { return true; });
+    return Promise.all(ids.map(function (id) { return lerDiario(id); })).then(function (l) {
+      var mudou = l.filter(function (d) { return d && ['encerrado', 'recusado'].indexOf(d.estado) >= 0; });
+      var rostos = {};
+      return Promise.all(mudou.map(function (d) {
+        if (d.rosto) rostos[d.rosto] = 1;
+        d.errosServidor = d.estado === 'recusado' && d.resposta ? d.resposta.erros || [] : [];
+        d.estado = 'rascunho'; d.rosto = null; d.encerradoEm = null; d.ultimoErro = ''; d.diaEnviado = null;
+        if (d.arquivos) delete d.arquivos.ROSTO;
+        return guardarDiario(d);
+      })).then(function () {
+        /* A foto do rosto é uma só para as folhas do dia: a que outra folha (não reaberta) ainda usa, fica. */
+        var reabertos = mudou.map(function (d) { return d.id; });
+        return Promise.all(Object.keys(rostos).filter(function (id) {
+          return !E.diarios.some(function (o) { return reabertos.indexOf(o.id) < 0 && o.rosto === id; });
+        }).map(apagarFoto));
+      }).then(function () { return mudou.length ? mudou[0].id : ''; });
     });
   };
   var p = navigator.locks && navigator.locks.request
@@ -671,15 +976,19 @@ function corrigir() {
   return p.then(function (r) {
     if (r === 'ocupado') { E.aviso = { tipo: 'atencao', texto: 'O app está enviando agora. Espere terminar e tente de novo.' }; return recarregarDiarios().then(desenhar); }
     E.aviso = null;
-    irPara(r ? 'diario' : 'encerrar');
+    if (!r) return irPara('encerrar');
+    return lerDiario(r).then(function (d) { E.aberto = d; return gravarConfig('aberto', r); }).then(function () { return irPara('diario'); });
   });
 }
 
-function apagarDiarioDoCelular() {
-  var d = E.aberto;
-  if (!d || !confirm('Tirar este diário do celular? As fotos dele também saem.')) return;
-  Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), apagarFoto(d.rosto)]).then(function () { return apagarDiario(d.id); })
-    .then(function () { E.aberto = null; return gravarConfig('aberto', null); }).then(function () { irPara('hoje'); });
+function apagarDiarioDoCelular(id) {
+  return lerDiario(id).then(function (d) {
+    if (!d || !confirm('Tirar este diário do celular? As fotos dele também saem.')) return;
+    /* A foto do rosto é uma só para as folhas do dia: fica se outra folha a usa. */
+    var emUso = E.diarios.some(function (o) { return o.id !== d.id && o.rosto && o.rosto === d.rosto; });
+    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), emUso ? null : apagarFoto(d.rosto)]).then(function () { return apagarDiario(d.id); })
+      .then(function () { if (E.aberto && E.aberto.id === d.id) { E.aberto = null; return gravarConfig('aberto', null); } }).then(function () { return irPara('encerrar'); });
+  });
 }
 
 // ---- Envio (OPE-17)
@@ -739,7 +1048,7 @@ corpo.addEventListener('input', function (ev) {
   var t = ev.target, d = E.aberto;
   if (t.id === 'buscaVerso') { var pac = pacoteDe(d.dia); $('listaVerso').innerHTML = itensDaBusca(pac, t.value, d.folha && d.folha.verso); return; }
   if (!d || d.estado !== 'rascunho') return;
-  var f = t.getAttribute('data-f'), c = t.getAttribute('data-c');
+  var f = t.getAttribute('data-f'), c = t.getAttribute('data-c'), xf = t.getAttribute('data-x'), fi = t.getAttribute('data-ficha');
   if (f) {
     d.form[f] = t.value;
     if (f === 'processo') d.form.processoMudado = true;
@@ -750,16 +1059,25 @@ corpo.addEventListener('input', function (ev) {
     d.form.codigos[+c][t.getAttribute('data-cf')] = t.value;
     if (t.getAttribute('data-cf') === 'cod') { var ds = descricaoDoCodigo(pacoteDe(d.dia), d.form.contrato, t.value), el = $('desc-' + c); if (el) { el.textContent = ds.texto; el.className = 'desc' + (ds.fora ? ' erro-campo' : ''); } }
     salvarDepois();
+  } else if (xf) {
+    garantirExecucao(d); d.form.execucao[xf] = t.value; salvarDepois();
+  } else if (fi) {
+    garantirExecucao(d);
+    var k = fi.split('|'), ficha = d.form.execucao[k[0]] = d.form.execucao[k[0]] || {};
+    ficha[k[1]] = t.value; salvarDepois();
   }
 });
 
 corpo.addEventListener('change', function (ev) {
   var t = ev.target, d = E.aberto;
-  if (t.getAttribute('data-rosto')) { encerrarComRosto(t.files && t.files[0]); return; }
+  if (t.getAttribute('data-rosto')) { encerrarODia(t.files && t.files[0]); return; }
+  if (t.hasAttribute('data-bl')) { corrigirHora(+t.getAttribute('data-bl'), t.value); return; }
+  if (t.hasAttribute('data-chegada')) { corrigirHora('chegada', t.value); return; }
+  if (t.id === 'tqEquipe') { E.equipe = t.value; desenhar(); return; }
   if (t.getAttribute('data-foto') && d && d.estado === 'rascunho') { trocarFotoDoPS(d, t.getAttribute('data-foto'), t.files && t.files[0]); return; }
   if (t.getAttribute('data-redesenha') && d && d.estado === 'rascunho') {
-    d.form[t.getAttribute('data-f')] = t.value;
-    if (t.getAttribute('data-f') === 'prefixo') { d.form.prefixo = t.value; }
+    if (t.hasAttribute('data-x')) { garantirExecucao(d); d.form.execucao[t.getAttribute('data-x')] = t.value; }
+    else d.form[t.getAttribute('data-f')] = t.value;
     salvarAgora().then(desenhar);
   }
 });
@@ -779,6 +1097,12 @@ function trocarFotoDoPS(d, lado, arquivo) {
   }).then(desenhar).catch(function (e) { $('estadoFoto').textContent = 'Não consegui preparar a foto: ' + (e && e.message || e); });
 }
 
+/* Ir até uma pendência: abre o diário dela (se for de uma folha) e rola até o campo. */
+function irAtePendencia(campo, idDiario) {
+  if (!idDiario || (E.aberto && E.aberto.id === idDiario)) return irPara('diario', campo);
+  return lerDiario(idDiario).then(function (d) { E.aberto = d; return gravarConfig('aberto', idDiario); }).then(function () { return irPara('diario', campo); });
+}
+
 corpo.addEventListener('click', function (ev) {
   var t = ev.target.closest ? ev.target.closest('button, a') : null;
   if (!t) return;
@@ -788,8 +1112,9 @@ corpo.addEventListener('click', function (ev) {
   if (a('data-abrir-folha')) return abrirFolha(a('data-abrir-folha'));
   if (a('data-abrir-diario')) return abrirDiario(a('data-abrir-diario'));
   if (a('data-aba-ir')) return irPara(a('data-aba-ir'));
-  if (t.hasAttribute('data-ir')) return irPara('diario', a('data-ir'));
-  if (a('data-agora') && d && d.estado === 'rascunho') { d.form[a('data-agora')] = horaAgora(); var i = $('i-' + a('data-agora')); if (i) i.value = d.form[a('data-agora')]; if ($('horasHH')) $('horasHH').textContent = horasHH(d.form); salvarDepois(); return; }
+  if (t.hasAttribute('data-ir')) return irAtePendencia(a('data-ir'), a('data-diario'));
+  if (a('data-toque')) return tocar(a('data-toque'));
+  if (a('data-agora') && d && d.estado === 'rascunho') { d.form[a('data-agora')] = horaAgora(); var i = $('i-' + a('data-agora')); if (i) i.value = d.form[a('data-agora')]; salvarDepois(); return; }
   if (d && d.estado === 'rascunho') {
     var x = d.form;
     if (a('data-tipo')) { x.tipoDia = a('data-tipo'); return salvarAgora().then(desenhar); }
@@ -797,6 +1122,7 @@ corpo.addEventListener('click', function (ev) {
     if (a('data-foi')) { x.pessoas[+a('data-i')].estado = a('data-foi'); return salvarAgora().then(desenhar); }
     if (a('data-tirar-p')) { x.pessoas.splice(+a('data-tirar-p'), 1); return salvarAgora().then(desenhar); }
     if (a('data-tirar-cod')) { x.codigos.splice(+a('data-tirar-cod'), 1); if (!x.codigos.length) x.codigos.push({ cod: '', qtd: '', adc: '' }); return salvarAgora().then(desenhar); }
+    if (a('data-xs')) { garantirExecucao(d); x.execucao[a('data-xs')] = a('data-v'); return salvarAgora().then(desenhar); }
     if (a('data-verso-cod')) {
       var vazio = x.codigos.filter(function (c) { return !c.cod && !c.qtd; })[0];
       if (vazio) vazio.cod = a('data-verso-cod'); else x.codigos.push({ cod: a('data-verso-cod'), qtd: '', adc: '' });
@@ -813,8 +1139,9 @@ corpo.addEventListener('click', function (ev) {
   if (acao === 'extra') return novaFolhaExtra();
   if (acao === 'enviar') return enviar('botão');
   if (acao === 'testar') return testarServidor();
-  if (acao === 'corrigir') return corrigir();
-  if (acao === 'apagar') return apagarDiarioDoCelular();
+  if (acao === 'corrigir') return corrigir(String(a('data-diario') || '').split(',').filter(Boolean));
+  if (acao === 'apagar') return apagarDiarioDoCelular(a('data-diario'));
+  if (acao === 'desfazerToque') return desfazerToque();
   if (acao === 'proteger') { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(preencherEnvio); return; }
   if (d && d.estado === 'rascunho') {
     var y = d.form;
@@ -857,18 +1184,23 @@ function lerLink() {
   return p.c ? { codigo: String(p.c).replace(/\D/g, '').slice(0, 6), url: p.s || '' } : null;
 }
 
-/* Enviados há mais de 7 dias e pacotes velhos saem: o celular do campo tem pouco espaço. */
+/* Enviados há mais de 7 dias, pacotes velhos e o dia em horários deles saem: o celular do campo tem pouco espaço.
+   A foto do rosto é uma só para as folhas do dia (5b): só sai quando nenhuma folha que fica a usa. */
 function limparVelhos() {
   var limite = new Date(Date.now() - DIAS_GUARDANDO_ENVIADOS * 86400000).toISOString();
   var velhos = E.diarios.filter(function (d) { return (d.estado === 'enviado' || d.estado === 'jaLancado') && (d.enviadoEm || d.mudadoEm) < limite; });
+  var ficam = E.diarios.filter(function (d) { return velhos.indexOf(d) < 0; });
+  var emUso = function (id) { return ficam.some(function (d) { return d.rosto === id; }); };
   return Promise.all(velhos.map(function (d) {
-    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), apagarFoto(d.rosto)]).then(function () { return apagarDiario(d.id); });
+    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), emUso(d.rosto) ? null : apagarFoto(d.rosto)]).then(function () { return apagarDiario(d.id); });
   })).then(function () {
     var diaLimite = isoMaisDias(hojeLocal(), -3);
     return noBanco('config', 'readonly', function (s) { return s.getAllKeys(); }).then(function (chaves) {
-      var usados = {}; E.diarios.forEach(function (d) { if (d.estado === 'rascunho' || d.estado === 'encerrado') usados[d.dia] = 1; });
-      return Promise.all((chaves || []).filter(function (k) { return /^pacote:\d{4}-\d{2}-\d{2}$/.test(k) && k.slice(7) < diaLimite && !usados[k.slice(7)]; })
-        .map(function (k) { return noBanco('config', 'readwrite', function (s) { return s.delete(k); }); }));
+      var usados = {}; ficam.forEach(function (d) { if (d.estado !== 'enviado' && d.estado !== 'jaLancado') usados[d.dia] = 1; });
+      return Promise.all((chaves || []).filter(function (k) {
+        var m = String(k).match(/^(?:pacote|dia):(\d{4}-\d{2}-\d{2})/);
+        return m && m[1] < diaLimite && !usados[m[1]];
+      }).map(function (k) { if (/^dia:/.test(k)) delete E.dias[k.slice(4)]; return noBanco('config', 'readwrite', function (s) { return s.delete(k); }); }));
     });
   }).then(recarregarDiarios).catch(function () { });
 }
@@ -891,7 +1223,7 @@ lerConfig('servidor').then(function (c) {
   E.cfg = c;
   return recarregarDiarios();
 }).then(function () {
-  return Promise.all([carregarPacotesGuardados(), lerConfig('aberto').then(function (id) { E.aberto = id ? E.diarios.filter(function (d) { return d.id === id; })[0] || null : null; })]);
+  return Promise.all([carregarPacotesGuardados(), carregarDias(), lerConfig('aberto').then(function (id) { E.aberto = id ? E.diarios.filter(function (d) { return d.id === id; })[0] || null : null; })]);
 }).then(limparVelhos).then(function () {
   desenhar();
   if (!E.cfg || E.ligar) return;

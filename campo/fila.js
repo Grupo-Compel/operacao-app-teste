@@ -8,7 +8,7 @@
    NADA DE DADO DA COMPEL NESTE ARQUIVO, nem endereço do servidor: tudo isso
    chega no celular (o link do supervisor e o pacote do dia) e fica só nele. */
 
-var VERSAO_APP = '5a · 13/10/2026';
+var VERSAO_APP = '5b · 13/10/2026';
 var BANCO = 'operacao-campo';
 
 function abrirBanco() {
@@ -69,7 +69,9 @@ function pacoteDoDiario(d) {
     atividade: x.atividade, processo: x.processo, status: x.status, ini: x.ini, fim: x.fim, alim: x.alim, ponto: x.ponto,
     codigos: x.tipoDia === 'PRODUCAO' ? x.codigos.filter(function (c) { return c.cod || c.qtd; }).map(function (c) { return { cod: c.cod, qtd: c.qtd, adc: c.adc, origem: 'Encarregado' }; }) : [],
     hhExtra: x.hhExtra, hhAdc: x.hhAdc, observacoes: x.observacoes,
-    km: { saidaBase: x.kmSaida || '', chegadaCanteiro: x.kmChegada || '' }, fotos: [] };
+    km: { saidaBase: x.kmSaida || '', chegadaCanteiro: x.kmChegada || '' }, fotos: [],
+    /* 5b: a execução da obra (só na produção). O dia em horários vai à parte, no envio. */
+    execucao: x.tipoDia === 'PRODUCAO' ? x.execucao || null : null };
 }
 
 /* Um pedido ao servidor. Texto puro (JSON), e não "application/json": é o que
@@ -136,7 +138,8 @@ function enviarDentroDaTrava(enviadoPor) {
         return enviarFotosDoDiario(cfg, d).then(function () {
           var p = pacoteDoDiario(d);
           p.fotos = [d.arquivos.PS_FRENTE, d.arquivos.PS_VERSO];
-          return postar(cfg.url, { acao: 'lancamento', token: cfg.token, pacote: p, rosto: d.arquivos.ROSTO, criadoEm: d.encerradoEm, enviadoPor: enviadoPor, tentativas: d.tentativas });
+          return postar(cfg.url, { acao: 'lancamento', token: cfg.token, pacote: p, rosto: d.arquivos.ROSTO, criadoEm: d.encerradoEm, enviadoPor: enviadoPor, tentativas: d.tentativas,
+                                   dia: d.diaEnviado || null });
         }).then(function (r) {
           d.resposta = r; d.ultimoErro = '';
           if (r.ok) { d.estado = 'enviado'; d.enviadoEm = new Date().toISOString(); d.enviadoPor = enviadoPor; resumo.enviados++; }
