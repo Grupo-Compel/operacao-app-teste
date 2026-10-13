@@ -11,7 +11,7 @@
    "enviado" que não chegou. */
 importScripts('fila.js');
 
-var VERSAO_CACHE = 'operacao-teste-7';
+var VERSAO_CACHE = 'operacao-teste-8';
 var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 
 self.addEventListener('install', function (e) {
@@ -20,7 +20,9 @@ self.addEventListener('install', function (e) {
 
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (nomes) {
-    return Promise.all(nomes.filter(function (n) { return n !== VERSAO_CACHE; }).map(function (n) { return caches.delete(n); }));
+    /* Só os caches DESTE app (13/10/2026): o app do encarregado mora na pasta
+       campo/ do mesmo site, com os caches dele (operacao-campo-...). */
+    return Promise.all(nomes.filter(function (n) { return /^operacao-teste-/.test(n) && n !== VERSAO_CACHE; }).map(function (n) { return caches.delete(n); }));
   }).then(function () { return self.clients.claim(); }));
 });
 
