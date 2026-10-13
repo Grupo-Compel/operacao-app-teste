@@ -32,7 +32,10 @@ var E = {
   baixando: false, enviando: false, ultimoEnvio: null, aviso: null, versaoNova: false,
   ligar: null,          // { codigo, url } vindos do link
   dias: {},             // 'aaaa-mm-dd|PREFIXO' -> o dia em horários da equipe (5b)
-  equipe: ''            // a equipe escolhida, quando o encarregado tem mais de uma
+  equipe: '',           // a equipe escolhida, quando o encarregado tem mais de uma
+  modoHoje: {},         // dia -> 'obra' | 'emergencia', o que a aba Hoje mostra (5b.1)
+  toque: null,          // o registro do dia escolhido e ainda não confirmado (5b.1)
+  fechados: {}          // os blocos que o encarregado fechou na tela (5b.1)
 };
 var REGRAS = {};        // geradoEm do pacote -> as funções de regra do servidor | { erro }
 
@@ -329,6 +332,7 @@ function tocar(tipo) {
   if (diaTravado(info.dia, info.prefixo)) return;
   var hora = ($('tqHora') || {}).value || '', km = String(($('tqKm') || {}).value || '').replace(/\D/g, ''), obra = ($('tqObra') || {}).value || '';
   var motivo = ($('tqMotivo') || {}).value || '', obs = String(($('tqObs') || {}).value || '').trim(), ult = r.blocos[r.blocos.length - 1];
+  E.valToque = { t: tipo, hora: hora, km: km, obra: $('tqObra') ? obra : undefined, motivo: motivo, obs: obs };
   var erro = function (t) { E.aviso = { tipo: 'erro', texto: t }; desenhar(); var c = $('f-dia'); if (c && c.scrollIntoView) c.scrollIntoView({ block: 'start' }); };
   if (minutos(hora) === null) return erro('A hora do registro (HH:MM).');
   if (ult && minutos(hora) <= minutos(ult.ini)) return erro('A hora tem de ser depois de ' + ult.ini + ', o último registro.');
@@ -345,7 +349,7 @@ function tocar(tipo) {
     if (!r.blocos.length) r.kmSaida = km;
     r.blocos.push({ t: tipo, ini: hora, obra: tipo === 'ALMOCO' ? '' : obra, motivo: tipo === 'PARADA' ? motivo : '', obs: tipo === 'PARADA' ? obs : '', tocadoEm: new Date().toISOString() });
   }
-  E.aviso = null;
+  E.aviso = null; E.toque = null; E.valToque = null;
   return guardarDia(r).then(desenhar);
 }
 function desfazerToque() {
@@ -385,24 +389,74 @@ function cartaoDoDia(info) {
       '<span><b>' + esc(nomeDoRegistro(b.t)) + '</b>' + (b.obra ? ' · ' + esc(rotuloDoAlvo(info.dia, info.prefixo, b.obra)) : '') + (b.motivo ? ' · ' + esc(b.motivo) + (b.obs ? ': ' + esc(b.obs) : '') : '') +
       '<small>' + (i + 1 < r.blocos.length || r.chegada ? duracao(dur) : 'em andamento') + '</small></span></li>';
   }).join('') + (r.chegada ? '<li class="reg reg-chegada"><input type="time" data-chegada="1" value="' + esc(r.chegada) + '"' + (trav ? ' disabled' : '') + ' aria-label="Hora da chegada"><span><b>Chegada à base</b><small>km ' + esc(r.kmSaida) + ' → ' + esc(r.kmChegada) + '</small></span></li>' : '') + '</ul>'
-    : '<p class="media">Nada registrado ainda. Ao sair da base, toque em <b>Saí · deslocando</b>.</p>';
+    : '<p class="media">Nada registrado ainda. Ao sair da base, toque em <b>Saí da base · deslocando</b>.</p>';
   if (trav) return h + '<div class="ajuda">O dia já foi encerrado: os horários não mudam mais.</div></div>';
-  if (!r.chegada) {
-    var obras = obrasDoDia(info.dia, info.prefixo), obraPadrao = ult && ult.obra ? ult.obra : E.aberto ? alvoDoDiario(E.aberto, R) : (obras[0] || [''])[0];
-    h += '<div class="toque"><div class="duas"><div><label for="tqHora">Hora</label><input id="tqHora" type="time" value="' + esc(horaAgora()) + '"></div>' +
-      '<div><label for="tqKm">Km do hodômetro</label><input id="tqKm" inputmode="numeric" maxlength="7" placeholder="' + (r.blocos.length ? 'na chegada' : 'na saída') + '" autocomplete="off"></div></div>' +
-      '<label for="tqObra">Obra</label><select id="tqObra">' + opcoes(obras, obraPadrao, obras.length ? undefined : 'Nenhuma obra no dia') + '</select>' +
-      '<label for="tqMotivo">Motivo, se for parada</label><select id="tqMotivo">' + opcoes(L.paradas || [], '', 'Escolha') + '</select>' +
-      '<input id="tqObs" placeholder="Descreva (se for &quot;Outro&quot;)" autocomplete="off" style="margin-top:6px">' +
-      '<div class="toques">' + [['DESLOC', 'Saí · deslocando'], ['SERVICO', 'Iniciei o serviço'], ['PARADA', 'Parada'], ['ALMOCO', 'Almoço']].map(function (t) {
-        return '<button type="button" class="btn medio' + (ult && ult.t === t[0] ? ' fantasma' : ' secundario') + '" data-toque="' + t[0] + '">' + t[1] + '</button>'; }).join('') +
-      '<button type="button" class="btn medio" data-toque="CHEGADA"' + (r.blocos.length ? '' : ' disabled') + '>Cheguei à base</button></div>' +
-      '<div class="ajuda">Cada toque fecha o registro anterior nessa hora e abre o próximo. Esqueceu de marcar? Troque a hora antes de tocar. A hora de cada registro pode ser corrigida até encerrar o dia.</div></div>';
-  }
+  if (!r.chegada) h += painelDoToque(info, r, L, R);
   if (r.blocos.length) h += '<button type="button" class="btn medio fantasma" data-acao="desfazerToque">' + (r.chegada ? 'Desfazer a chegada' : 'Desfazer o último registro') + '</button>';
   if (r.chegada) h += '<div class="aviso ok" style="margin-top:8px">Dia registrado: ' + esc(hs.expIni) + ' às ' + esc(hs.expFim) + ' · serviço ' + esc(duracao(hs.minutos.SERVICO)) +
     (hs.minutos.PARADA ? ' · paradas ' + esc(duracao(hs.minutos.PARADA)) : '') + '. Agora é encerrar (aba Encerrar).</div>';
   return h + '</div>';
+}
+
+/*
+ * O PRÓXIMO REGISTRO (5b.1, pedido do Dalton no teste de 13/10/2026, 18:01: "deixar
+ * mais óbvio, dependendo do que eu marcar, qual que é o próximo"). Os botões de
+ * cima são o passo mais provável depois do registro em andamento; os de baixo, os
+ * outros que as regras aceitam. O que não faz sentido some: sair da base de novo
+ * quando já está deslocando, o segundo almoço (o servidor recusa), a chegada sem
+ * ter saído. Tocar escolhe; os campos daquele registro aparecem, e "Confirmar"
+ * grava. Os campos de antes (hora, km, obra, motivo, todos de uma vez) não diziam
+ * qual valia para qual botão.
+ */
+var PROXIMOS_REGISTROS = {
+  '':      [['DESLOC'], []],
+  DESLOC:  [['SERVICO', 'CHEGADA'], ['PARADA', 'ALMOCO']],
+  SERVICO: [['PARADA', 'ALMOCO', 'DESLOC'], ['SERVICO', 'CHEGADA']],
+  PARADA:  [['SERVICO', 'DESLOC'], ['ALMOCO', 'PARADA', 'CHEGADA']],
+  ALMOCO:  [['SERVICO', 'DESLOC'], ['PARADA', 'CHEGADA']]
+};
+function nomeDoToque(tipo, ult, r) {
+  var u = ult ? ult.t : '';
+  if (tipo === 'DESLOC') return r.blocos.length ? 'Saí · deslocando' : 'Saí da base · deslocando';
+  if (tipo === 'SERVICO') return u === 'DESLOC' ? 'Cheguei na obra · iniciei o serviço' : u === 'SERVICO' ? 'Serviço em outra obra' : u ? 'Voltei ao serviço' : 'Iniciei o serviço';
+  if (tipo === 'PARADA') return u === 'PARADA' ? 'Outra parada' : 'Parada';
+  if (tipo === 'ALMOCO') return 'Almoço';
+  return 'Cheguei à base';
+}
+function painelDoToque(info, r, L, R) {
+  var ult = r.blocos[r.blocos.length - 1], prox = PROXIMOS_REGISTROS[ult ? ult.t : ''] || PROXIMOS_REGISTROS[''];
+  var jaAlmocou = r.blocos.some(function (b) { return b.t === 'ALMOCO'; });
+  var vale = function (t) { return !(t === 'ALMOCO' && jaAlmocou); };
+  var esc1 = E.toque && (prox[0].concat(prox[1]).indexOf(E.toque) >= 0) ? E.toque : '';
+  var botao = function (t, classe) { return '<button type="button" class="btn medio ' + classe + (esc1 === t ? ' escolhido' : '') + '" data-toque="' + t + '">' + esc(nomeDoToque(t, ult, r)) + '</button>'; };
+  var h = '<div class="toque">';
+  if (ult) h += '<div class="agora">Agora: <b>' + esc(nomeDoRegistro(ult.t)) + '</b> desde ' + esc(ult.ini) + (ult.obra ? ' · ' + esc(rotuloDoAlvo(info.dia, info.prefixo, ult.obra)) : '') + (ult.motivo ? ' · ' + esc(ult.motivo) : '') +
+    '<small>Saiu da base às ' + esc(r.blocos[0].ini) + ' com o km <b>' + esc(r.kmSaida) + '</b>.</small></div>';
+  h += '<div class="etiqueta" style="margin-top:10px">' + (ult ? 'Qual é o próximo registro?' : 'Ao sair da base') + '</div>' +
+    '<div class="toques">' + prox[0].filter(vale).map(function (t) { return botao(t, ''); }).join('') + '</div>';
+  var outros = prox[1].filter(vale);
+  if (outros.length) h += '<div class="ajuda" style="margin-top:8px">Outro registro:</div><div class="toques outros">' + outros.map(function (t) { return botao(t, 'fantasma'); }).join('') + '</div>';
+  if (esc1) h += formularioDoToque(esc1, info, r, L, R, ult);
+  else h += '<div class="ajuda" style="margin-top:8px">Cada registro fecha o anterior nessa hora. A hora de cada um pode ser corrigida na lista acima até encerrar o dia.</div>';
+  return h + '</div>';
+}
+function formularioDoToque(t, info, r, L, R, ult) {
+  var obras = obrasDoDia(info.dia, info.prefixo), obraPadrao = ult && ult.obra ? ult.obra : E.aberto ? alvoDoDiario(E.aberto, R) : (obras[0] || [''])[0];
+  /* O que já foi digitado volta depois de uma recusa (o desenho novo não pode apagar a hora trocada). */
+  var v = E.valToque && E.valToque.t === t ? E.valToque : {};
+  var h = '<div class="formToque" id="formToque"><div class="etiqueta">' + esc(nomeDoToque(t, ult, r)) + '</div>' +
+    '<label for="tqHora">Hora</label><input id="tqHora" type="time" value="' + esc(v.hora || horaAgora()) + '"><div class="ajuda">É a hora de agora. Esqueceu de marcar na hora? Troque antes de confirmar.</div>';
+  if (t === 'DESLOC' && !r.blocos.length) h += '<label for="tqKm">Km do hodômetro na saída da base</label><input id="tqKm" inputmode="numeric" maxlength="7" autocomplete="off" value="' + esc(v.km || '') + '">';
+  if (t === 'CHEGADA') h += '<label for="tqKm">Km do hodômetro na chegada à base</label><input id="tqKm" inputmode="numeric" maxlength="7" autocomplete="off" value="' + esc(v.km || '') + '"><div class="ajuda">Na saída, o hodômetro marcava <b>' + esc(r.kmSaida) + '</b>.</div>';
+  if (t === 'SERVICO' || t === 'DESLOC' || t === 'PARADA') {
+    if (obras.length) h += '<label for="tqObra">' + (t === 'DESLOC' ? 'Indo para qual obra' : 'Em qual obra') + '</label><select id="tqObra">' +
+      (t === 'DESLOC' ? '<option value=""' + (v.obra === '' ? ' selected' : '') + '>Para a base, ou outro lugar</option>' : '') + opcoes(obras, v.obra !== undefined ? v.obra : obraPadrao) + '</select>';
+    else if (t === 'SERVICO') h += '<div class="aviso atencao">Nenhuma folha aberta para esta equipe no dia. Abra a folha na aba Hoje: <b>Obra</b> ou <b>Emergência</b>.<button type="button" class="btn medio secundario" data-aba-ir="hoje">Ir para Hoje</button></div>';
+  }
+  if (t === 'PARADA') h += '<label for="tqMotivo">Motivo da parada</label><select id="tqMotivo">' + opcoes(L.paradas || [], v.motivo || '', 'Escolha') + '</select>' +
+    '<input id="tqObs" placeholder="Descreva (obrigatório se for &quot;Outro&quot;)" autocomplete="off" style="margin-top:6px" value="' + esc(v.obs || '') + '">';
+  return h + '<div class="duas"><div><button type="button" class="btn medio fantasma" data-acao="cancelarToque">Cancelar</button></div>' +
+    '<div><button type="button" class="btn medio" data-acao="confirmarToque">Confirmar</button></div></div></div>';
 }
 
 // ---------------------------------------------------------------- o diário
@@ -609,27 +663,56 @@ function telaHoje() {
       (rd.chegada ? 'Chegou à base às <b>' + esc(rd.chegada) + '</b>.' : ub ? '<b>' + esc(nomeDoRegistro(ub.t)) + '</b> desde ' + esc(ub.ini) + (ub.obra ? ' · ' + esc(rotuloDoAlvo(info.dia, info.prefixo, ub.obra)) : '') + '.' : 'Ainda não saiu da base.') +
       '</div><button type="button" class="btn medio" data-aba-ir="diario">Registrar no dia</button></div>';
   }
-  var R = regrasDe(pac), chaves = {};
+  /*
+   * OBRA OU EMERGÊNCIA (5b.1, pedido do Dalton no teste de 13/10/2026, 18:01): o
+   * encarregado sem programação no dia ia direto ao Diário e não conseguia lançar
+   * nada, porque a "folha sem programação" ficava escondida no pé da tela. Agora a
+   * primeira pergunta é o que a equipe fez: obra (com o número de folhas
+   * programadas) ou emergência (com o número de folhas abertas).
+   */
+  var folhas = (pac.folhas || []).slice().sort(function (a, b) { return String(a.hi || '99') < String(b.hi || '99') ? -1 : 1; });
+  var extras = E.diarios.filter(function (d) { return d.dia === dia && d.extra; });
+  var modo = E.modoHoje[dia] || (extras.length && !folhas.length ? 'emergencia' : folhas.length ? 'obra' : '');
+  h += '<div class="cartao"><div class="etiqueta">O que a equipe faz em ' + esc(brDe(dia).slice(0, 5)) + '?</div><div class="escolha">' +
+    [['obra', 'Obra', folhas.length, folhas.length === 1 ? 'programada' : 'programadas'], ['emergencia', 'Emergência', extras.length, extras.length === 1 ? 'folha aberta' : 'folhas abertas']].map(function (o) {
+      return '<button type="button" class="' + (modo === o[0] ? 'ativo' : '') + '" data-modo="' + o[0] + '"><b>' + o[1] + '</b><span class="num">' + o[2] + '</span><small>' + o[3] + '</small></button>';
+    }).join('') + '</div>' + (modo ? '' : '<div class="ajuda">Toque em <b>Obra</b> ou em <b>Emergência</b>.</div>') + '</div>';
+  if (modo === 'obra') h += cartoesDeObra(dia, pac, folhas);
+  if (modo === 'emergencia') h += cartoesDeEmergencia(dia, extras);
+  return h;
+}
+
+function cartoesDeObra(dia, pac, folhas) {
+  var R = regrasDe(pac), chaves = {}, h = '';
   (pac.lancados || []).forEach(function (l) { chaves[l.chave] = l; });
-  h += '<div class="etiqueta" style="margin:6px 2px 0">Folhas de ' + esc(brDe(dia)) + '</div>';
-  if (!(pac.folhas || []).length) h += '<div class="cartao media">Nenhuma folha da programação para você neste dia. Se a equipe trabalhou numa emergência, use a folha sem programação.</div>';
-  (pac.folhas || []).forEach(function (f) {
+  if (!folhas.length) return '<div class="cartao"><div class="aviso atencao">Você não tem obra programada para ' + esc(dia === hojeLocal() ? 'hoje' : brDe(dia)) + '.</div>' +
+    '<button type="button" class="btn medio secundario" data-modo="emergencia">Já atendi uma emergência</button>' +
+    '<button type="button" class="btn medio" data-modo="emergencia">Estou indo atender uma emergência</button></div>';
+  h += '<div class="etiqueta" style="margin:6px 2px 0">Folhas de ' + esc(brDe(dia)) + ' · ' + folhas.length + (folhas.length === 1 ? ' obra programada' : ' obras programadas') + '</div>';
+  folhas.forEach(function (f) {
     var d = diarioDaFolha(dia, f.codigo), ja = R && !R.erro ? chaves[R.chaveDoLancamentoPS(dia, f.p, f.obra)] : null;
     var chip = d ? '<span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span>' : ja ? '<span class="chip jaLancado">Já lançada no sistema</span>' : '';
-    h += '<div class="cartao folha"><div class="linha1"><b>' + esc(f.p) + '</b> · obra <b>' + esc(f.obra || '—') + '</b> ' + chip + '</div>' +
-      '<div class="media">' + esc(f.municipio || '') + (f.hi ? ' · programado ' + esc(f.hi) + (f.hf ? ' às ' + esc(f.hf) : '') : '') + '</div>' +
+    h += '<div class="cartao folha">' + (f.hi ? '<div class="horario">' + esc(f.hi) + (f.hf ? ' às ' + esc(f.hf) : '') + '</div>' : '') +
+      '<div class="linha1"><b>' + esc(f.p) + '</b> · obra <b>' + esc(f.obra || '—') + '</b> ' + chip + '</div>' +
+      '<div class="media">' + esc(f.municipio || '') + '</div>' +
       (f.servico ? '<div class="fraco">' + esc(String(f.servico).slice(0, 140)) + '</div>' : '') +
       '<div class="fraco">Folha ' + esc(f.codigo) + '</div>' +
       (ja && !d ? '<div class="ajuda">Lançada em ' + esc(ja.quando) + ' por ' + esc(ja.por || '?') + '.</div>' :
         '<button type="button" class="btn medio' + (d ? ' secundario' : '') + '" data-abrir-folha="' + esc(f.codigo) + '">' + (d ? (d.estado === 'rascunho' ? 'Continuar o diário' : 'Ver o diário') : 'Começar o diário') + '</button>') + '</div>';
   });
-  var extras = E.diarios.filter(function (d) { return d.dia === dia && d.extra; });
+  return h;
+}
+
+/* A folha de emergência é a folha sem programação: serve também ao plantão e ao homem-hora. */
+function cartoesDeEmergencia(dia, extras) {
+  var h = '<div class="cartao"><div class="etiqueta">Atendimento emergencial</div>' +
+    '<button type="button" class="btn" data-acao="extra">Abrir uma folha de atendimento emergencial</button>' +
+    '<div class="ajuda">Uma folha por atendimento. Serve também para o plantão sem acionamento e o homem-hora (à disposição do cliente).</div></div>';
   extras.forEach(function (d) {
-    h += '<div class="cartao folha"><div class="linha1"><b>' + esc(d.form.prefixo || 'Sem equipe') + '</b> · ' + (d.form.obra ? 'obra <b>' + esc(d.form.obra) + '</b>' : 'sem obra') +
-      ' <span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span></div><div class="fraco">Folha sem programação</div>' +
+    h += '<div class="cartao folha"><div class="linha1"><b>' + esc(d.form.prefixo || 'Sem equipe') + '</b> · ' + (d.form.obra ? 'obra <b>' + esc(d.form.obra) + '</b>' : d.form.tipoDia === 'PLANTAO' ? 'plantão' : 'sem número de obra') +
+      ' <span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span></div><div class="fraco">Folha sem programação' + (d.form.municipio ? ' · ' + esc(d.form.municipio) : '') + '</div>' +
       '<button type="button" class="btn medio secundario" data-abrir-diario="' + esc(d.id) + '">' + (d.estado === 'rascunho' ? 'Continuar o diário' : 'Ver o diário') + '</button></div>';
   });
-  h += '<button type="button" class="btn fantasma" data-acao="extra">+ Folha sem programação (emergência)</button>';
   return h;
 }
 
@@ -653,6 +736,9 @@ function novaFolhaExtra() {
   var pac = pacoteDe(E.dia);
   if (!pac) return;
   var d = novoDiario(pac, null);
+  /* Aberta pelo menu da emergência: já nasce como manutenção emergencial (o encarregado troca se for outra). */
+  d.form.atividade = ATIVIDADE_DO_PAPEL.Emergencial; d.form.processo = processoPadrao(d.form.atividade);
+  E.modoHoje[E.dia] = 'emergencia';
   E.aberto = d;
   return guardarDiario(d).then(function () { return gravarConfig('aberto', d.id); }).then(function () { irPara('diario'); });
 }
@@ -701,7 +787,11 @@ function telaDiario() {
   var d = E.aberto, info = diaAtual();
   if (!info) return '<div class="cartao">Sem o pacote do dia, não há equipe nem folhas. Baixe o pacote na aba <b>Hoje</b>.</div>';
   var h = cartaoDoDia(info);
-  if (!d) return h + listaDeFolhas(info) + '<div class="ajuda" style="text-align:center">Toque numa folha para preencher o PS dela.</div>';
+  if (!d) {
+    var lf = listaDeFolhas(info);
+    return h + (lf ? lf + '<div class="ajuda" style="text-align:center">Toque numa folha para preencher o PS dela.</div>' :
+      '<div class="cartao"><div class="aviso atencao">Nenhuma folha aberta neste dia. Na aba Hoje, escolha <b>Obra</b> (a programação) ou <b>Emergência</b> (a folha sem programação).</div><button type="button" class="btn medio" data-aba-ir="hoje">Ir para Hoje</button></div>');
+  }
   if (d.estado !== 'rascunho') return h + '<div class="cartao">Este diário está <span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span>. Veja na aba <b>Encerrar</b>.<button type="button" class="btn medio secundario" data-aba-ir="encerrar">Ir para Encerrar</button></div>' + listaDeFolhas(info);
   var pac = pacoteDe(d.dia);
   if (!pac) return h + '<div class="aviso atencao">O pacote de ' + esc(brDe(d.dia)) + ' não está no celular. Baixe na aba Hoje.</div>';
@@ -709,8 +799,11 @@ function telaDiario() {
   var x = d.form, L = pac.listas || {}, f = d.folha, prod = x.tipoDia === 'PRODUCAO', hh = x.tipoDia === 'HH', plantao = x.tipoDia === 'PLANTAO';
   if (d.errosServidor && d.errosServidor.length) h += '<div class="aviso erro"><b>O servidor recusou este diário:</b><ul>' + d.errosServidor.map(function (e) { return '<li>' + esc(e.msg) + '</li>'; }).join('') + '</ul></div>';
 
+  /* As seções numeradas, com a borda e o cabeçalho fortes (5b.1, pedido do Dalton em 13/10/2026: no branco
+     sobre branco não se via onde uma parte acabava e a outra começava). */
+  var n = 0, cab = function (t) { return '<div class="etiqueta"><span class="n">' + (++n) + '</span>' + t + '</div>'; };
   /* 1. a folha */
-  h += '<div class="cartao"><div class="etiqueta">' + (f ? 'Folha ' + esc(f.codigo) : 'Folha sem programação') + ' · ' + esc(brDe(d.dia)) + '</div>' +
+  h += '<div class="cartao secao">' + cab(f ? 'Folha da obra ' + esc(f.obra || '—') : 'Folha de emergência (sem programação)') + '<div class="fraco" style="margin-bottom:4px">' + (f ? esc(f.codigo) + ' · ' : '') + esc(brDe(d.dia)) + '</div>' +
     '<div><b>' + esc(E.cfg.nome) + '</b> <span class="fraco">· encarregado · ' + esc(E.cfg.mat) + '</span></div>' +
     '<div id="f-prefixo">' + (f ? '<div class="media">Equipe <b>' + esc(x.prefixo) + '</b></div>' :
       '<label for="i-prefixo">Equipe (prefixo)</label><select id="i-prefixo" data-f="prefixo" data-redesenha="1">' + opcoes((pac.equipes || []).map(function (e) { return [e.p, e.p + (e.t ? ' · ' + e.t : '')]; }), x.prefixo, 'Escolha a equipe') + '</select>') + '</div>' +
@@ -719,7 +812,7 @@ function telaDiario() {
     '<div class="ajuda">' + esc(plantao ? 'Plantão sem acionamento: a equipe ficou de prontidão e não foi acionada.' : hh ? 'À disposição do cliente: grava as horas do expediente, sem o almoço.' : 'Produção: os serviços do verso do PS.') + '</div></div></div>';
 
   /* 2. os horários, que saem do dia */
-  h += '<div class="cartao"><div class="etiqueta">Horários desta folha</div><dl class="resumo">' +
+  h += '<div class="cartao secao">' + cab('Horários desta folha') + '<dl class="resumo">' +
     '<dt>Expediente</dt><dd>' + esc(x.expIni && x.expFim ? x.expIni + ' às ' + x.expFim : '—') + '</dd>' +
     '<dt>Almoço</dt><dd>' + esc(x.almIni ? x.almIni + ' às ' + x.almFim : 'sem almoço') + '</dd>' +
     (prod ? '<dt>Atividades</dt><dd>' + esc(x.ini ? x.ini + ' às ' + x.fim : '— (falta "Iniciei o serviço" nesta obra)') + '</dd>' : '') +
@@ -729,7 +822,7 @@ function telaDiario() {
   /* 3. componentes */
   var naLista = {}; x.pessoas.forEach(function (p) { naLista[semZeros(p.mat)] = 1; }); naLista[semZeros(E.cfg.mat)] = 1;
   var paraAdd = (pac.pessoasDaBase || []).filter(function (p) { return !naLista[semZeros(p.mat)]; });
-  h += '<div class="cartao" id="f-pessoas"><div class="etiqueta">Componentes da equipe</div><div class="ajuda" style="margin:-2px 0 6px">Marque cada um: <b>Foi</b> ou <b>Faltou</b>.</div>' +
+  h += '<div class="cartao secao" id="f-pessoas">' + cab('Componentes da equipe') + '<div class="ajuda" style="margin:-2px 0 6px">Marque cada um: <b>Foi</b> ou <b>Faltou</b>.</div>' +
     (x.pessoas.length ? x.pessoas.map(function (p, i) {
       var imp = impedidoNoPacote(pac, p.mat);
       return '<div class="pessoa"><div><b>' + esc(p.nome || '?') + '</b><small>' + esc(p.mat) + (p.sugerido ? '' : ' · adicionado · <a href="#" data-tirar-p="' + i + '">tirar</a>') + '</small>' +
@@ -740,12 +833,12 @@ function telaDiario() {
     '<div class="duas" style="margin-top:6px"><div><input id="addMat" inputmode="numeric" maxlength="8" placeholder="ou a matrícula" autocomplete="off"></div><div><button type="button" class="btn medio secundario" style="margin-top:0" data-acao="addPessoa">Adicionar</button></div></div></div>';
 
   /* 4. DDS */
-  h += '<div class="cartao" id="f-dds"><div class="etiqueta">DDS de hoje</div>' + seg('dds', [['NA_BASE', 'Na base'], ['EM_CAMPO', 'Em campo'], ['NAO_HOUVE', 'Não houve']], x.dds) +
+  h += '<div class="cartao secao" id="f-dds">' + cab('DDS de hoje') + seg('dds', [['NA_BASE', 'Na base'], ['EM_CAMPO', 'Em campo'], ['NAO_HOUVE', 'Não houve']], x.dds) +
     (x.dds === 'EM_CAMPO' ? campoHora('ddsHora', 'Hora do DDS', x) + campoTexto('ddsQuem', 'Quem conduziu', x) : '') + '</div>';
 
   /* 5. a obra */
   if (!plantao) {
-    h += '<div class="cartao"><div class="etiqueta">A obra</div>' +
+    h += '<div class="cartao secao">' + cab('A obra') +
       (f ? '<div id="f-obra" class="media">Documento (projeto / NR): <b>' + esc(x.obra || '—') + '</b></div>' : campoTexto('obra', 'Documento (projeto / NR)' + (hh ? ' — opcional no homem-hora' : ''), x, ' style="text-transform:uppercase"')) +
       campoTexto('municipio', 'Município', x, ' style="text-transform:uppercase"') +
       '<div class="duas"><div>' + campoTexto('alim', 'Alimentador', x, ' maxlength="8" style="text-transform:uppercase"') + '</div><div>' + campoTexto('ponto', 'Ponto elétrico', x, ' maxlength="16" style="text-transform:uppercase"') + '</div></div>' +
@@ -757,11 +850,15 @@ function telaDiario() {
   }
 
   /* 6. a execução (5b): o que só quem estava lá sabe */
-  if (prod) h += cartaoDaExecucao(d, pac);
+  if (prod) h += cartaoDaExecucao(d, pac, cab);
 
   /* 7. contrato e códigos */
-  h += '<div class="cartao"><div class="etiqueta">' + (prod ? 'Os serviços do verso' : 'O código do dia') + '</div>' +
-    '<div id="f-contrato"><label for="i-contrato">Contrato e reajuste</label><select id="i-contrato" data-f="contrato" data-redesenha="1">' + opcoes(pac.contratos || [], x.contrato, 'Escolha') + '</select></div>';
+  /* O CONTRATO SÓ NA EMERGÊNCIA (5b.1, Dalton em 13/10/2026: para o encarregado, a tipologia do contrato
+     é irrelevante; a obra da carteira já tem o dela). A folha da programação traz o contrato e ele não
+     aparece; na folha sem programação, o encarregado escolhe (pode ser de outro contrato da base). */
+  var contratoVisivel = !f || !x.contrato || (pac.contratos || []).indexOf(x.contrato) < 0;
+  h += '<div class="cartao secao">' + cab(prod ? 'Os serviços do verso' : 'O código do dia') +
+    (contratoVisivel ? '<div id="f-contrato"><label for="i-contrato">Contrato da ' + (f ? 'obra' : 'emergência') + '</label><select id="i-contrato" data-f="contrato" data-redesenha="1">' + opcoes(pac.contratos || [], x.contrato, 'Escolha') + '</select></div>' : '<div id="f-contrato"></div>');
   if (prod) {
     var mapa = mapaDoContrato(pac, x.contrato);
     h += '<div id="f-codigos" style="margin-top:8px">' + x.codigos.map(function (c, i) {
@@ -785,7 +882,7 @@ function telaDiario() {
   h += '</div>';
 
   /* 8. observações e fotos do papel */
-  h += '<div class="cartao"><div class="etiqueta">Observações e as fotos do PS</div><div id="f-observacoes"><textarea data-f="observacoes" maxlength="500" placeholder="Observações (opcional)">' + esc(x.observacoes) + '</textarea></div>' +
+  h += '<div class="cartao secao">' + cab('Observações e as fotos do PS <span class="obrig">obrigatórias</span>') + '<div id="f-observacoes"><textarea data-f="observacoes" maxlength="500" placeholder="Observações (opcional)">' + esc(x.observacoes) + '</textarea></div>' +
     '<div id="f-fotos" class="fotos" style="margin-top:10px">' + ['FRENTE', 'VERSO'].map(function (l) {
       var id = d.fotos && d.fotos[l];
       return '<label class="foto' + (id ? ' ok' : '') + '">' + (id ? '<img alt="" data-foto-id="' + esc(id) + '"><span>' + (l === 'FRENTE' ? 'Frente' : 'Verso') + ' ✓ · tocar para trocar</span>' : '<b>📷 ' + (l === 'FRENTE' ? 'Frente' : 'Verso') + ' do PS</b><span>tocar para fotografar</span>') +
@@ -796,34 +893,50 @@ function telaDiario() {
 }
 
 /* A execução da obra (conceito, 15.3): pendência, desligamento com o COD, equipamento com a ficha. */
-function cartaoDaExecucao(d, pac) {
+function cartaoDaExecucao(d, pac, cab) {
   var x = d.form.execucao, L = pac.listas || {}, R = regrasDe(pac);
   var sx = function (campo, lista) { return '<div class="seg">' + lista.map(function (v) { return '<button type="button" data-xs="' + campo + '" data-v="' + esc(v) + '" class="' + (x[campo] === v ? 'ativo' : '') + '">' + esc(v) + '</button>'; }).join('') + '</div>'; };
   var tx = function (campo, rotulo, extra) { return '<div id="f-' + campo + '"><label for="x-' + campo + '">' + esc(rotulo) + '</label><input id="x-' + campo + '" data-x="' + campo + '" value="' + esc(x[campo]) + '" autocomplete="off"' + (extra || '') + '></div>'; };
-  var h = '<div class="cartao" id="f-execucao"><div class="etiqueta">A execução da obra</div>' +
-    '<div id="f-pendencia"><label>Ficou pendência na obra?</label>' + sx('pendencia', ['Sim', 'Não']) +
-    (x.pendencia === 'Sim' ? '<textarea data-x="pendenciaDesc" maxlength="300" placeholder="O que ficou pendente" style="margin-top:6px">' + esc(x.pendenciaDesc) + '</textarea>' : '') + '</div>';
+  /*
+   * OS BLOCOS QUE ABREM E FECHAM (5b.1, pedido do Dalton em 13/10/2026): a
+   * pendência, o desligamento e o equipamento, cada um com o que falta no título.
+   * Começam abertos; o que o encarregado fecha fica fechado (E.fechados), porque
+   * cada toque redesenha a tela.
+   */
+  var bloco = function (chave, titulo, situacao, corpo) {
+    var k = d.id + '|' + chave;
+    return '<details class="bloco" data-bloco="' + esc(k) + '"' + (E.fechados[k] ? '' : ' open') + '><summary><span>' + titulo + '</span>' +
+      '<span class="sit ' + (situacao ? 'ok' : 'falta') + '">' + (situacao ? '✓ ' + esc(situacao) : 'falta') + '</span></summary><div class="dentro">' + corpo + '</div></details>';
+  };
+  var h = '<div class="cartao secao" id="f-execucao">' + cab('A execução da obra');
+  h += '<div id="f-pendencia">' + bloco('pendencia', 'Ficou pendência na obra?', x.pendencia === 'Não' ? 'não' : x.pendencia === 'Sim' && String(x.pendenciaDesc || '').trim() ? 'sim' : '',
+    sx('pendencia', ['Sim', 'Não']) + (x.pendencia === 'Sim' ? '<textarea data-x="pendenciaDesc" maxlength="300" placeholder="O que ficou pendente" style="margin-top:6px">' + esc(x.pendenciaDesc) + '</textarea>' : '')) + '</div>';
   if (x.comDesligamento) {
     var r = diaDaEquipe(d.dia, d.form.prefixo), espera = 0;
     if (R && R.horariosDoDiaApp) espera = R.horariosDoDiaApp(retratoDoDia(r)).esperaCOD[alvoDoDiario(d, R)] || 0;
-    h += '<div class="etiqueta" style="margin-top:12px">Desligamento · COD' + (d.folha && d.folha.om ? ' <span class="fraco">(programado: ' + esc(d.folha.om) + ')</span>' : '') + '</div>' +
+    var codOk = ['odm', 'horaLiberacao', 'operadorLiberacao', 'horaEntrega', 'operadorEntrega', 'areaSombra'].every(function (c) { return String(x[c] || '').trim(); });
+    h += bloco('cod', 'Desligamento · COD' + (d.folha && d.folha.om ? ' <span class="fraco">(programado: ' + esc(d.folha.om) + ')</span>' : ''), codOk ? 'preenchido' : '',
       tx('odm', 'Número da ODM') +
       '<div class="duas"><div>' + tx('horaLiberacao', 'Hora da liberação', ' type="time"') + '</div><div>' + tx('operadorLiberacao', 'Operador da liberação') + '</div></div>' +
       '<div class="duas"><div>' + tx('horaEntrega', 'Hora da entrega', ' type="time"') + '</div><div>' + tx('operadorEntrega', 'Operador da entrega') + '</div></div>' +
       '<div class="ajuda">Espera do operador: <b>' + esc(R && R.faixaDaEsperaCOD ? R.faixaDaEsperaCOD(espera) : '—') + '</b>' + (espera ? ' (' + espera + ' min)' : '') + '. Sai sozinha da parada "' + esc(L.motivoCOD || 'COD') + '" nesta obra.</div>' +
-      '<div id="f-areaSombra"><label>Área de sombra?</label>' + sx('areaSombra', ['Sim', 'Não']) + '</div>';
+      '<div id="f-areaSombra"><label>Área de sombra?</label>' + sx('areaSombra', ['Sim', 'Não']) + '</div>');
   }
-  h += '<div id="f-equipamento"><div class="etiqueta" style="margin-top:12px">Equipamento</div>' + sx('equipamento', L.equipamento || []) +
-    (x.equipamento && x.equipamento !== 'Nenhum' ? '<label>Qual equipamento?</label><select data-x="equipamentoTipo" data-redesenha="1">' + opcoes(L.equipamentos || [], x.equipamentoTipo, 'Escolha') + '</select>' : '');
-  [['I', 'Instalado', 'fichaI'], ['R', 'Retirado', 'fichaR']].forEach(function (l) {
-    if (!x.equipamento || x.equipamento === 'Nenhum' || (l[0] === 'I' && x.equipamento === 'Retirado') || (l[0] === 'R' && x.equipamento === 'Instalado')) return;
+  var eq = x.equipamento, temI = eq && eq !== 'Nenhum' && eq !== 'Retirado', temR = eq && eq !== 'Nenhum' && eq !== 'Instalado';
+  var fichaOk = function (k) { return (L.fichaObrigatoria || []).every(function (c) { return String((x[k] || {})[c] || '').trim(); }); };
+  var eqOk = eq === 'Nenhum' ? 'nenhum' : eq && x.equipamentoTipo && (!temI || fichaOk('fichaI')) && (!temR || fichaOk('fichaR')) ? String(eq).toLowerCase() : '';
+  var corpoEq = sx('equipamento', L.equipamento || []) +
+    (eq && eq !== 'Nenhum' ? '<label>Qual equipamento?</label><select data-x="equipamentoTipo" data-redesenha="1">' + opcoes(L.equipamentos || [], x.equipamentoTipo, 'Escolha') + '</select>' : '');
+  [['I', 'Instalado', 'fichaI', temI], ['R', 'Retirado', 'fichaR', temR]].forEach(function (l) {
+    if (!l[3]) return;
     var fx = x[l[2]] || {};
-    h += '<div class="etiqueta" style="margin-top:10px">Ficha do ' + l[1].toLowerCase() + '</div><div class="duas">' + (L.ficha || []).map(function (c) {
+    corpoEq += bloco(l[2], 'Ficha do ' + l[1].toLowerCase(), fichaOk(l[2]) ? 'patrimônio e série' : '', '<div class="duas">' + (L.ficha || []).map(function (c) {
       var obr = (L.fichaObrigatoria || []).indexOf(c) >= 0;
       return '<div><label>' + esc(c) + (obr ? '' : ' <span class="fraco">(se tiver)</span>') + '</label><input data-ficha="' + l[2] + '|' + esc(c) + '" value="' + esc(fx[c] || '') + '" autocomplete="off"></div>';
-    }).join('') + '</div>';
+    }).join('') + '</div>');
   });
-  return h + '</div></div>';
+  h += '<div id="f-equipamento">' + bloco('equipamento', 'Equipamento instalado ou retirado', eqOk, corpoEq) + '</div>';
+  return h + '</div>';
 }
 
 function itensDaBusca(pac, termo, verso) {
@@ -1082,6 +1195,13 @@ corpo.addEventListener('change', function (ev) {
   }
 });
 
+/* O bloco que o encarregado fecha fica fechado no próximo desenho ("toggle" não sobe: escuta na captura). */
+corpo.addEventListener('toggle', function (ev) {
+  var k = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-bloco');
+  if (!k) return;
+  if (ev.target.open) delete E.fechados[k]; else E.fechados[k] = true;
+}, true);
+
 function trocarFotoDoPS(d, lado, arquivo) {
   if (!arquivo) return;
   $('estadoFoto').textContent = 'preparando a foto…';
@@ -1109,11 +1229,12 @@ corpo.addEventListener('click', function (ev) {
   var a = function (n) { return t.getAttribute(n); }, d = E.aberto;
   if (t.tagName === 'A') ev.preventDefault();
   if (a('data-dia')) { E.dia = a('data-dia'); E.aviso = null; desenhar(); if (!pacoteDe(E.dia) && navigator.onLine) baixarPacote(E.dia); return; }
+  if (a('data-modo')) { E.modoHoje[E.dia] = a('data-modo'); return desenhar(); }
   if (a('data-abrir-folha')) return abrirFolha(a('data-abrir-folha'));
   if (a('data-abrir-diario')) return abrirDiario(a('data-abrir-diario'));
   if (a('data-aba-ir')) return irPara(a('data-aba-ir'));
   if (t.hasAttribute('data-ir')) return irAtePendencia(a('data-ir'), a('data-diario'));
-  if (a('data-toque')) return tocar(a('data-toque'));
+  if (a('data-toque')) { if (E.toque !== a('data-toque')) E.valToque = null; E.toque = a('data-toque'); E.aviso = null; desenhar(); var ft = $('formToque'); if (ft && ft.scrollIntoView) ft.scrollIntoView({ block: 'nearest' }); return; }
   if (a('data-agora') && d && d.estado === 'rascunho') { d.form[a('data-agora')] = horaAgora(); var i = $('i-' + a('data-agora')); if (i) i.value = d.form[a('data-agora')]; salvarDepois(); return; }
   if (d && d.estado === 'rascunho') {
     var x = d.form;
@@ -1142,6 +1263,8 @@ corpo.addEventListener('click', function (ev) {
   if (acao === 'corrigir') return corrigir(String(a('data-diario') || '').split(',').filter(Boolean));
   if (acao === 'apagar') return apagarDiarioDoCelular(a('data-diario'));
   if (acao === 'desfazerToque') return desfazerToque();
+  if (acao === 'confirmarToque') return E.toque ? tocar(E.toque) : null;
+  if (acao === 'cancelarToque') { E.toque = null; E.valToque = null; E.aviso = null; return desenhar(); }
   if (acao === 'proteger') { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(preencherEnvio); return; }
   if (d && d.estado === 'rascunho') {
     var y = d.form;

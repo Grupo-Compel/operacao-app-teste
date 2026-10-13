@@ -33,7 +33,7 @@
   .sinal.off { background:#4A3A12; color:#FFC95C; } .sinal.on { background:#123A26; color:#6FE0A5; }
   main { flex:1; overflow-y:auto; padding:12px 12px 24px; display:grid; gap:10px; align-content:start; max-width:640px; width:100%; margin:0 auto; }
   main > * { min-width:0; }
-  .cartao { background:var(--superficie); border:1px solid var(--linha); border-radius:var(--raio); padding:13px; }
+  .cartao { background:var(--superficie); border:1.5px solid #C9CED6; border-radius:var(--raio); padding:13px; box-shadow:0 1px 3px rgba(35,31,32,.08); }
   .etiqueta { font-size:11.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--tinta-media); margin-bottom:6px; }
   .fraco { color:var(--tinta-fraca); } .media { color:var(--tinta-media); }
   .ajuda { font-size:12.5px; color:var(--tinta-fraca); margin-top:4px; }
@@ -86,14 +86,37 @@
   a { color:var(--azul); } ul.lista a { color:inherit; text-decoration:none; } ul.lista a b { text-decoration:underline; text-decoration-color:var(--linha); }
   details summary { cursor:pointer; color:var(--azul); font-weight:600; min-height:var(--toque); display:flex; align-items:center; }
   /* 5b: o dia em horários (as cores dos registros são as do protótipo 3.4) */
-  ul.registros li.reg { display:grid; grid-template-columns:96px 1fr; gap:8px; align-items:center; border-left:4px solid #8E97A6; padding-left:8px; margin:4px 0; }
+  ul.registros li.reg { display:grid; grid-template-columns:116px 1fr; gap:8px; align-items:center; border-left:4px solid #8E97A6; padding-left:8px; margin:4px 0; }
   ul.registros li.reg input { min-height:40px; padding:6px; }
   ul.registros li.reg small { display:block; color:var(--tinta-fraca); }
   li.reg-servico { border-left-color:var(--verde) !important; } li.reg-parada { border-left-color:var(--ambar) !important; }
   li.reg-almoco { border-left-color:#C9CDD4 !important; } li.reg-chegada { border-left-color:var(--grafite) !important; }
   .toques { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; } .toques .btn { margin-top:0; }
-  .toques .btn:last-child { grid-column:1 / -1; }
+  .toques .btn:last-child:nth-child(odd) { grid-column:1 / -1; }
   .folha-resumo { border-top:1px solid var(--linha); padding-top:8px; margin-top:8px; } .folha-resumo:first-of-type { border-top:0; margin-top:0; padding-top:0; }
+  /* 5b.1 (pedido do Dalton no teste de 13/10/2026): cada caixa com o cabeçalho marcado, as seções do diário
+     numeradas, a escolha Obra ou Emergência na aba Hoje, o próximo registro do dia e os blocos que abrem e fecham. */
+  .cartao > .etiqueta:first-child { margin:-13px -13px 10px; padding:9px 13px; background:#EEF0F3; border-bottom:1.5px solid #C9CED6; border-radius:var(--raio) var(--raio) 0 0; color:var(--tinta); }
+  .cartao.secao > .etiqueta:first-child { background:var(--grafite); color:#fff; border-bottom:0; display:flex; align-items:center; gap:9px; font-size:12.5px; }
+  .etiqueta .n { flex:none; width:24px; height:24px; border-radius:50%; background:var(--vermelho); color:#fff; display:inline-flex; align-items:center; justify-content:center; font-size:13px; letter-spacing:0; }
+  .obrig { font-size:10.5px; padding:1px 7px; border-radius:10px; background:var(--vermelho); color:#fff; letter-spacing:.04em; margin-left:auto; }
+  .escolha { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .escolha button { min-height:104px; border:2px solid #C9CED6; border-radius:var(--raio); background:#fff; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; color:var(--tinta-media); }
+  .escolha button b { font-size:17px; color:var(--tinta); } .escolha button .num { font-size:30px; font-weight:800; line-height:1.1; color:var(--tinta); } .escolha button small { font-size:12px; }
+  .escolha button.ativo { border-color:var(--vermelho); background:var(--vermelho-claro); } .escolha button.ativo .num { color:var(--vermelho-forte); }
+  .folha .horario { font-size:18px; font-weight:800; color:var(--vermelho-forte); }
+  .agora { background:var(--azul-claro); color:var(--azul); border-radius:8px; padding:9px 11px; margin-top:10px; font-size:14.5px; } .agora small { display:block; font-size:12.5px; margin-top:2px; }
+  .toques.outros { grid-template-columns:repeat(3,1fr); } .toques.outros .btn { min-height:44px; font-size:13px; padding:6px; }
+  .toques .btn.escolhido { box-shadow:0 0 0 3px var(--grafite); }
+  .formToque { border:2px solid var(--grafite); border-radius:var(--raio); padding:12px; margin-top:12px; background:#FAFAFB; }
+  .formToque > .etiqueta:first-child { margin:-12px -12px 6px; padding:8px 12px; background:var(--grafite); color:#fff; border-radius:8px 8px 0 0; }
+  details.bloco { border:1.5px solid #C9CED6; border-radius:8px; margin-top:10px; background:#fff; }
+  details.bloco > summary { padding:0 12px; justify-content:space-between; gap:8px; color:var(--tinta); font-weight:700; }
+  details.bloco > summary::before { content:'▸'; color:var(--tinta-fraca); font-size:14px; } details.bloco[open] > summary::before { content:'▾'; }
+  details.bloco > summary > span:first-of-type { flex:1; }
+  details.bloco .dentro { padding:0 12px 12px; }
+  details.bloco details.bloco { margin-top:12px; }
+  .sit { font-size:12px; font-weight:700; padding:2px 9px; border-radius:12px; white-space:nowrap; } .sit.ok { background:var(--verde-claro); color:var(--verde); } .sit.falta { background:var(--ambar-claro); color:var(--ambar); }
   footer { text-align:center; color:var(--tinta-fraca); font-size:12px; padding:6px 0 4px; }
 </style>
 </head>
