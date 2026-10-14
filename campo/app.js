@@ -547,8 +547,10 @@ function conferirDiario(d) {
   /* Primeiro o dia: o erro de horário do PS quase sempre é falta de toque, e o do dia diz qual. */
   R.validarDiaDoApp(retratoDoDia(diaDaEquipe(d.dia, d.form.prefixo)), p).forEach(junta);
   /* 5c: o book, com o que os dias anteriores deixaram na obra. */
+  /* O servidor ainda sem o book (instalado antes da 5c) não manda essas regras: o app não cobra o book que
+     o servidor não conhece, senão o encarregado não conseguiria encerrar (14/10/2026: o app no GitHub vai
+     na frente da instalação). */
   if (R.validarBookDoApp) R.validarBookDoApp(retratoDoBook(d), p, anteriorDoDiario(d)).forEach(junta);
-  else if (d.form.tipoDia === 'PRODUCAO') junta({ campo: 'book', msg: 'O pacote deste dia é de uma versão antiga do sistema (sem o book): baixe de novo na aba Hoje.' });
   val.erros.forEach(function (e) { if (CAMPOS_DO_DIA.indexOf(e.campo) < 0 || !out.erros.some(function (x) { return x.doDia; })) junta(e); });
   var x = d.form;
   var semMarcar = x.pessoas.filter(function (q) { return q.estado !== 'foi' && q.estado !== 'faltou'; });
@@ -976,7 +978,7 @@ function proximoLugar(e, tipo, anterior) {
 }
 function cartaoDoBook(d, pac, cab) {
   var R = regrasDe(pac), x = d.form.execucao || {}, b = bookDo(d), anterior = anteriorDoDiario(d);
-  if (!R || !R.estadoDoBookApp) return '<div class="cartao secao" id="f-book">' + cab('Book da obra') + '<div class="aviso atencao">O pacote deste dia é de uma versão antiga do sistema: baixe de novo (aba Hoje).</div></div>';
+  if (!R || !R.estadoDoBookApp) return '<div class="cartao secao" id="f-book">' + cab('Book da obra') + '<div class="aviso">O book no celular chega quando o sistema for atualizado. Por enquanto, as fotos do book seguem como hoje.</div></div>';
   var e = estadoDoBook(d, R), L = pac.listas || {}, geral = L.geral || 'Geral';
   if (!b.sel) b.sel = (e.lugares[0] || {}).id || geral;
   var h = '<div class="cartao secao" id="f-book">' + cab('Book da obra' + (e.previstas ? ' <span class="obrig">' + e.prontas + ' de ' + e.previstas + ' prontas</span>' : '')) +
