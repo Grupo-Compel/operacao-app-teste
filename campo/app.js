@@ -81,10 +81,10 @@ function regrasDe(pac) {
   if (!pac || !pac.regras) return null;
   var k = pac.geradoEm + '|' + pac.dia;
   if (!REGRAS[k]) {
-    /* As da 5b só existem no pacote do servidor da 5b: o pacote antigo abre, e o app pede para baixar de novo. */
+    /* As da 5b e as da 5c só existem no pacote do servidor da 5b e da 5c: o pacote antigo abre, e o app pede para baixar de novo. */
+    var opc = ['validarDiaDoApp', 'horariosDoDiaApp', 'alvoDoDiarioApp', 'faixaDaEsperaCOD', 'validarBookDoApp', 'estadoDoBookApp', 'etiquetasDoLugarApp', 'casaEquipamentoApp'];
     try { REGRAS[k] = new Function(pac.regras + '\nreturn { validarLancamentoPS: validarLancamentoPS, chaveDoLancamentoPS: chaveDoLancamentoPS,' +
-      ' validarDiaDoApp: typeof validarDiaDoApp === "function" ? validarDiaDoApp : null, horariosDoDiaApp: typeof horariosDoDiaApp === "function" ? horariosDoDiaApp : null,' +
-      ' alvoDoDiarioApp: typeof alvoDoDiarioApp === "function" ? alvoDoDiarioApp : null, faixaDaEsperaCOD: typeof faixaDaEsperaCOD === "function" ? faixaDaEsperaCOD : null };')(); }
+      opc.map(function (n) { return ' ' + n + ': typeof ' + n + ' === "function" ? ' + n + ' : null'; }).join(',') + ' };')(); }
     catch (e) { REGRAS[k] = { erro: 'As regras do pacote não abriram neste celular (' + e.message + '). Baixe o pacote de novo.' }; }
   }
   return REGRAS[k];
@@ -546,6 +546,9 @@ function conferirDiario(d) {
   };
   /* Primeiro o dia: o erro de horário do PS quase sempre é falta de toque, e o do dia diz qual. */
   R.validarDiaDoApp(retratoDoDia(diaDaEquipe(d.dia, d.form.prefixo)), p).forEach(junta);
+  /* 5c: o book, com o que os dias anteriores deixaram na obra. */
+  if (R.validarBookDoApp) R.validarBookDoApp(retratoDoBook(d), p, anteriorDoDiario(d)).forEach(junta);
+  else if (d.form.tipoDia === 'PRODUCAO') junta({ campo: 'book', msg: 'O pacote deste dia é de uma versão antiga do sistema (sem o book): baixe de novo na aba Hoje.' });
   val.erros.forEach(function (e) { if (CAMPOS_DO_DIA.indexOf(e.campo) < 0 || !out.erros.some(function (x) { return x.doDia; })) junta(e); });
   var x = d.form;
   var semMarcar = x.pessoas.filter(function (q) { return q.estado !== 'foi' && q.estado !== 'faltou'; });
@@ -851,6 +854,8 @@ function telaDiario() {
 
   /* 6. a execução (5b): o que só quem estava lá sabe */
   if (prod) h += cartaoDaExecucao(d, pac, cab);
+  /* 7. o book da obra (5c): na produção que não foi cancelada (o cancelado não tem o que fotografar). */
+  if (prod && x.status !== 'CANCELADO') h += cartaoDoBook(d, pac, cab);
 
   /* 7. contrato e códigos */
   /* O CONTRATO SÓ NA EMERGÊNCIA (5b.1, Dalton em 13/10/2026: para o encarregado, a tipologia do contrato
@@ -939,6 +944,148 @@ function cartaoDaExecucao(d, pac, cab) {
   return h + '</div>';
 }
 
+// ---------------------------------------------------------------- o book da obra (5c)
+/*
+ * O BOOK POR ESTRUTURA (conceito, 14, 20 e 21; protótipo 3.4): cada foto diz de
+ * qual estrutura é (FP01… da viabilidade; EQ01… para o equipamento fora de uma
+ * FP; "Geral" para APR, sinalização, DITAIS e croqui) e o que mostra (a etiqueta
+ * do book e o item dela). Cada estrutura tem a observação do encarregado. As
+ * etiquetas, o mínimo de fotos e o que impede encerrar são as regras do
+ * servidor (28_BookCampo.gs), que chegam no pacote; o que os dias anteriores
+ * já fotografaram também (o book soma os dias e as equipes).
+ *
+ * O GPS É LIDO NA HORA DA FOTO, e só nela (conceito, 22.3: não gastar bateria),
+ * com prazo curto: sem posição, a foto sai assim mesmo, sem a coordenada.
+ */
+function bookDo(d) { d.book = d.book || { estruturas: {}, fotos: {}, extras: [], sel: '' }; d.book.extras = d.book.extras || []; return d.book; }
+function anteriorDoDiario(d) { var f = folhaDoPacote(pacoteDe(d.dia), d.codigo); return (f && f.book) || { previstas: [], lugares: {}, geral: {} }; }
+function estadoDoBook(d, R) {
+  var e = R.estadoDoBookApp(retratoDoBook(d), anteriorDoDiario(d)), b = bookDo(d), tem = {};
+  e.lugares.forEach(function (l) { tem[l.id] = 1; });
+  /* A estrutura acrescentada hoje e ainda sem foto também aparece. */
+  b.extras.forEach(function (id) { if (!tem[id]) e.lugares.push({ id: id, prevista: false, eq: /^EQ/.test(id), hoje: false, fotos: 0, fotosHoje: 0, obs: '', itens: {}, fora: !/^EQ/.test(id) && e.previstas > 0, faltas: ['sem foto'], pronta: false }); });
+  return e;
+}
+/* O próximo número na numeração da obra: FP07 depois de FP06; EQ01, EQ02… para o equipamento. */
+function proximoLugar(e, tipo, anterior) {
+  var ids = e.lugares.map(function (l) { return l.id; });
+  if (tipo === 'EQ') { for (var k = 1; k < 100; k++) { var q = 'EQ' + (k < 10 ? '0' : '') + k; if (ids.indexOf(q) < 0) return q; } }
+  var num = String(anterior.numeracao || ''), fmt = function (k) { var d2 = (k < 10 ? '0' : '') + k; return /^01/.test(num) ? d2 : /^F\.P/.test(num) ? 'F.P' + k : 'FP' + d2; };
+  for (var n = 1; n < 500; n++) if (ids.indexOf(fmt(n)) < 0) return fmt(n);
+  return '';
+}
+function cartaoDoBook(d, pac, cab) {
+  var R = regrasDe(pac), x = d.form.execucao || {}, b = bookDo(d), anterior = anteriorDoDiario(d);
+  if (!R || !R.estadoDoBookApp) return '<div class="cartao secao" id="f-book">' + cab('Book da obra') + '<div class="aviso atencao">O pacote deste dia é de uma versão antiga do sistema: baixe de novo (aba Hoje).</div></div>';
+  var e = estadoDoBook(d, R), L = pac.listas || {}, geral = L.geral || 'Geral';
+  if (!b.sel) b.sel = (e.lugares[0] || {}).id || geral;
+  var h = '<div class="cartao secao" id="f-book">' + cab('Book da obra' + (e.previstas ? ' <span class="obrig">' + e.prontas + ' de ' + e.previstas + ' prontas</span>' : '')) +
+    '<div class="ajuda" style="margin-top:-4px">Escolha a estrutura e fotografe cada item. Verde: pronta. Amarela: falta foto ou a observação. Branca: sem foto.' + (e.previstas ? ' Soma os outros dias.' : '') + '</div><div class="lugares">';
+  h += e.lugares.map(function (l) {
+    var cls = l.pronta ? 'pronta' : (l.fotos || l.obs) ? 'parcial' : '';
+    return '<button type="button" class="lugar ' + cls + (b.sel === l.id ? ' sel' : '') + '" data-lugar="' + esc(l.id) + '">' + esc(l.id) + (l.fora ? '*' : '') + '</button>';
+  }).join('') + '<button type="button" class="lugar geral' + (b.sel === geral ? ' sel' : '') + '" data-lugar="' + esc(geral) + '">' + esc(geral) + '</button></div>' +
+    '<div class="duas"><div><button type="button" class="btn medio fantasma" data-acao="addLugar" data-novo="FP">+ estrutura' + (e.previstas ? ' fora da viabilidade' : '') + '</button></div>' +
+    '<div><button type="button" class="btn medio fantasma" data-acao="addLugar" data-novo="EQ">+ equipamento (EQ)</button></div></div>';
+  var sel = b.sel, l = e.lugares.filter(function (y) { return y.id === sel; })[0], etqs = R.etiquetasDoLugarApp(sel, x);
+  h += '<div class="lugarSel"><div class="etiqueta">' + (sel === geral ? 'Geral: segurança e croqui' : 'Estrutura ' + esc(sel) + (l && l.fora ? ' · fora da viabilidade' : '') + (l && l.eq ? ' · equipamento' : '')) + '</div>';
+  if (!etqs.length) h += '<div class="aviso atencao">' + (/^EQ/.test(sel) ? 'O ponto EQ é do equipamento: declare na execução (seção 6) o equipamento instalado ou retirado e qual é.' : 'Nada a fotografar aqui.') + '</div>';
+  var ant = sel === geral ? (anterior.geral || {}) : ((anterior.lugares || {})[sel] || {}).itens || {};
+  etqs.forEach(function (it) {
+    var nHoje = it.fotos.filter(function (f) { return b.fotos[sel + '|' + it.id + '|' + f]; }).length, nAnt = it.fotos.filter(function (f) { return (ant[it.id] || []).indexOf(f) >= 0; }).length;
+    var exigida = it.onde === 'dia' && (it.quando === 'sempre' || (it.quando === 'deslig' && x.comDesligamento)) || /^equip/.test(it.quando);
+    var feitos = it.fotos.filter(function (f) { return b.fotos[sel + '|' + it.id + '|' + f] || (ant[it.id] || []).indexOf(f) >= 0; }).length;
+    /* "se tiver": a etiqueta da estrutura só é cobrada quando a estrutura tem (uma foto dela já basta para cobrar o resto). */
+    var situ = feitos >= it.min ? (nHoje ? feitos + ' de ' + it.fotos.length : 'outro dia') : (!exigida && !feitos ? null : '');
+    h += blocoDoDiario(d, 'bk|' + sel + '|' + it.id, esc(it.id) + (exigida ? ' <span class="fraco">(exigida)</span>' : ''), situ,
+      '<div class="fotos">' + it.fotos.map(function (f) {
+        var k = sel + '|' + it.id + '|' + f, id = b.fotos[k], antes = (ant[it.id] || []).indexOf(f) >= 0;
+        return '<label class="foto' + (id ? ' ok' : antes ? ' antes' : '') + '">' + (id ? '<img alt="" data-foto-id="' + esc(id) + '"><span>' + esc(f) + ' ✓</span>' :
+          '<b>📷 ' + esc(f) + '</b><span>' + (antes ? 'já fotografada em outro dia · tocar para outra' : 'tocar para fotografar') + '</span>') +
+          '<input type="file" accept="image/*" capture="environment" data-book="' + esc(k) + '"></label>';
+      }).join('') + '</div>' + (it.min < it.fotos.length ? '<div class="ajuda">Mínimo: ' + it.min + ' de ' + it.fotos.length + '.</div>' : ''));
+  });
+  /* A foto que não cabe mais aqui (o equipamento declarado mudou): o encarregado tira. */
+  Object.keys(b.fotos).filter(function (k) { return k.split('|')[0] === sel && b.fotos[k] && !etqs.some(function (it) { return k.split('|')[1] === it.id; }); }).forEach(function (k) {
+    h += '<div class="aviso atencao">A foto ' + esc(k.split('|').slice(1).join(' · ')) + ' não cabe mais aqui (o equipamento declarado na execução mudou).<button type="button" class="btn medio secundario" data-acao="tirarFotoBook" data-chave="' + esc(k) + '">Tirar esta foto</button></div>';
+  });
+  if (sel !== geral) {
+    var obsAnt = ((anterior.lugares || {})[sel] || {}).obs || '';
+    h += '<label for="bkObs">Observação da estrutura ' + esc(sel) + '</label><textarea id="bkObs" data-bkobs="' + esc(sel) + '" maxlength="600" placeholder="Ex.: POSTE EXISTENTE DT 11/300 · + 01 S2 · − 03 S1 (+ instalado, − retirado, * reaplicado)">' + esc((b.estruturas[sel] || {}).obs || '') + '</textarea>' +
+      (obsAnt ? '<div class="ajuda">De outro dia: ' + esc(obsAnt) + '</div>' : '');
+  }
+  return h + '<div id="estadoFotoBook" class="ajuda"></div></div></div>';
+}
+/* Um bloco que abre e fecha, com o que falta no título (o mesmo da execução, 5b.1). */
+function blocoDoDiario(d, chave, titulo, situacao, corpo) {
+  var k = d.id + '|' + chave;
+  return '<details class="bloco" data-bloco="' + esc(k) + '"' + (E.fechados[k] ? '' : ' open') + '><summary><span>' + titulo + '</span>' +
+    (situacao === null ? '<span class="sit vazio">se tiver</span>' : '<span class="sit ' + (situacao ? 'ok' : 'falta') + '">' + (situacao ? '✓ ' + esc(situacao) : 'falta') + '</span>') +
+    '</summary><div class="dentro">' + corpo + '</div></details>';
+}
+
+/* A posição na hora da foto, ou nada em 8 segundos (sem sinal o GPS funciona, mas pode demorar). */
+function lerPosicao() {
+  return new Promise(function (ok) {
+    if (!navigator.geolocation) return ok(null);
+    var feito = false, fim = function (v) { if (!feito) { feito = true; ok(v); } };
+    setTimeout(function () { fim(null); }, 8000);
+    try {
+      navigator.geolocation.getCurrentPosition(function (p) { fim({ lat: p.coords.latitude, lon: p.coords.longitude, precisao: Math.round(p.coords.accuracy || 0) }); },
+        function () { fim(null); }, { enableHighAccuracy: true, timeout: 7500, maximumAge: 60000 });
+    } catch (e) { fim(null); }
+  });
+}
+/* A coordenada UTM da marca d'água, como nos books da Energisa ("21K 734210 7536120"). WGS84, fórmula padrão. */
+function utmDe(lat, lon) {
+  if (typeof lat !== 'number' || typeof lon !== 'number') return '';
+  var a = 6378137, f = 1 / 298.257223563, k0 = 0.9996, e2 = f * (2 - f), ep2 = e2 / (1 - e2), rad = Math.PI / 180;
+  var zona = Math.floor((lon + 180) / 6) + 1, lon0 = ((zona - 1) * 6 - 180 + 3) * rad, fi = lat * rad, la = lon * rad;
+  var N = a / Math.sqrt(1 - e2 * Math.sin(fi) * Math.sin(fi)), T = Math.tan(fi) * Math.tan(fi), C = ep2 * Math.cos(fi) * Math.cos(fi), A = Math.cos(fi) * (la - lon0);
+  var M = a * ((1 - e2 / 4 - 3 * e2 * e2 / 64 - 5 * Math.pow(e2, 3) / 256) * fi - (3 * e2 / 8 + 3 * e2 * e2 / 32 + 45 * Math.pow(e2, 3) / 1024) * Math.sin(2 * fi) +
+    (15 * e2 * e2 / 256 + 45 * Math.pow(e2, 3) / 1024) * Math.sin(4 * fi) - (35 * Math.pow(e2, 3) / 3072) * Math.sin(6 * fi));
+  var x = k0 * N * (A + (1 - T + C) * Math.pow(A, 3) / 6 + (5 - 18 * T + T * T + 72 * C - 58 * ep2) * Math.pow(A, 5) / 120) + 500000;
+  var y = k0 * (M + N * Math.tan(fi) * (A * A / 2 + (5 - T + 9 * C + 4 * C * C) * Math.pow(A, 4) / 24 + (61 - 58 * T + T * T + 600 * C - 330 * ep2) * Math.pow(A, 6) / 720));
+  if (lat < 0) y += 10000000;
+  var letra = 'CDEFGHJKLMNPQRSTUVWX'.charAt(Math.min(19, Math.max(0, Math.floor((lat + 80) / 8))));
+  return zona + letra + ' ' + Math.round(x) + ' ' + Math.round(y);
+}
+function trocarFotoDoBook(d, chave, arquivo) {
+  if (!arquivo) return;
+  var c = chave.split('|'), lugar = c[0], etq = c[1], item = c.slice(2).join('|'), b = bookDo(d);
+  var aviso = function (t) { var el = $('estadoFotoBook'); if (el) el.textContent = t; };
+  aviso('lendo a posição e preparando a foto…');
+  var tirada = new Date();
+  lerPosicao().then(function (pos) {
+    var linhas = [tirada.toLocaleString('pt-BR') + (pos ? '   ·   ' + utmDe(pos.lat, pos.lon) : ''),
+      ['Obra ' + (d.form.obra || '—'), lugar === 'Geral' ? 'GERAL' : lugar.replace(/^(FP|EQ)(\d)/, '$1 $2')].join('   ·   '),
+      etq + ' · ' + item, [d.form.prefixo, 'Enc. ' + E.cfg.nome].filter(Boolean).join('   ·   ')];
+    return processarFoto(arquivo, LADOS_FOTO_PS, TETO_FOTO_PS, linhas).then(function (r) {
+      var id = novoId(), antiga = b.fotos[chave];
+      return guardarFoto({ id: id, blob: r.blob, tipo: 'BOOK', diario: d.id, criadoEm: tirada.toISOString(),
+        meta: { lugar: lugar, etiqueta: etq, item: item, lat: pos ? pos.lat : null, lon: pos ? pos.lon : null, precisao: pos ? pos.precisao : null, tiradaEm: tirada.toISOString() } }).then(function () {
+        b.fotos[chave] = id;
+        if (d.arquivos) delete d.arquivos['BOOK|' + chave];
+        return guardarDiario(d).then(function () { return apagarFoto(antiga); });
+      });
+    });
+  }).then(desenhar).catch(function (e) { aviso('Não consegui preparar a foto: ' + (e && e.message || e)); });
+}
+function tirarFotoDoBook(d, chave) {
+  var b = bookDo(d), id = b.fotos[chave];
+  delete b.fotos[chave];
+  if (d.arquivos) delete d.arquivos['BOOK|' + chave];
+  return guardarDiario(d).then(function () { return apagarFoto(id); }).then(desenhar);
+}
+/* "12 fotos: FP01, FP02, EQ01 e Geral" (o resumo antes de assinar). */
+function resumoDoBook(d) {
+  var r = retratoDoBook(d), lugares = [];
+  r.fotos.forEach(function (f) { if (lugares.indexOf(f.lugar) < 0) lugares.push(f.lugar); });
+  return r.fotos.length ? r.fotos.length + (r.fotos.length === 1 ? ' foto: ' : ' fotos: ') + lugares.join(', ') : 'sem fotos';
+}
+/* As fotos do book de um diário (para apagar junto com ele). */
+function idsDoBook(d) { var f = (d.book || {}).fotos || {}; return Object.keys(f).map(function (k) { return f[k]; }).filter(Boolean); }
+
 function itensDaBusca(pac, termo, verso) {
   termo = String(termo || '').trim().toUpperCase();
   var itens = itensDoVerso(pac).filter(function (i) { return !verso || i.lado === verso; });
@@ -999,7 +1146,8 @@ function telaEncerrar() {
           '<dt>Dia</dt><dd>' + esc(NOME_DO_TIPO_DIA[x.tipoDia]) + '</dd><dt>Placa</dt><dd>' + esc(v.placa) + '</dd>' +
           '<dt>Expediente</dt><dd>' + esc(v.expIni + ' às ' + v.expFim) + (v.almIni ? ' · almoço ' + esc(v.almIni + '–' + v.almFim) : '') + '</dd>' +
           '<dt>Foram</dt><dd>' + (foram.length + 1) + ' (com você)</dd>' + (faltaram.length ? '<dt>Faltaram</dt><dd>' + esc(faltaram.map(function (p) { return p.nome || p.mat; }).join(', ')) + '</dd>' : '') +
-          (x.tipoDia === 'PRODUCAO' ? '<dt>Atividades</dt><dd>' + esc(v.ini ? v.ini + ' às ' + v.fim : '—') + '</dd><dt>Pendência</dt><dd>' + esc(x.execucao.pendencia) + '</dd>' : '') +
+          (x.tipoDia === 'PRODUCAO' ? '<dt>Atividades</dt><dd>' + esc(v.ini ? v.ini + ' às ' + v.fim : '—') + '</dd><dt>Pendência</dt><dd>' + esc(x.execucao.pendencia) + '</dd>' +
+            '<dt>Book</dt><dd>' + esc(resumoDoBook(d)) + '</dd>' : '') +
           '<dt>Códigos</dt><dd>' + esc((v.codigos || []).map(function (k) { return k.cod + ' × ' + String(k.qtd).replace('.', ',') + (k.adc ? ' (+' + Math.round(k.adc * 100) + '%)' : ''); }).join('; ')) + '</dd></dl></div>';
       }).join('') + '</div>' +
         '<div class="cartao"><div class="etiqueta">Assinar com a foto do rosto</div><p class="media">A foto do seu rosto é a assinatura do dia: mostra que foi você quem encerrou. Ela vai para uma pasta separada e não aparece no book.' +
@@ -1099,7 +1247,7 @@ function apagarDiarioDoCelular(id) {
     if (!d || !confirm('Tirar este diário do celular? As fotos dele também saem.')) return;
     /* A foto do rosto é uma só para as folhas do dia: fica se outra folha a usa. */
     var emUso = E.diarios.some(function (o) { return o.id !== d.id && o.rosto && o.rosto === d.rosto; });
-    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), emUso ? null : apagarFoto(d.rosto)]).then(function () { return apagarDiario(d.id); })
+    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), emUso ? null : apagarFoto(d.rosto)].concat(idsDoBook(d).map(apagarFoto))).then(function () { return apagarDiario(d.id); })
       .then(function () { if (E.aberto && E.aberto.id === d.id) { E.aberto = null; return gravarConfig('aberto', null); } }).then(function () { return irPara('encerrar'); });
   });
 }
@@ -1174,6 +1322,9 @@ corpo.addEventListener('input', function (ev) {
     salvarDepois();
   } else if (xf) {
     garantirExecucao(d); d.form.execucao[xf] = t.value; salvarDepois();
+  } else if (t.hasAttribute('data-bkobs')) {
+    var bo = bookDo(d), lg = t.getAttribute('data-bkobs');
+    bo.estruturas[lg] = bo.estruturas[lg] || {}; bo.estruturas[lg].obs = t.value; salvarDepois();
   } else if (fi) {
     garantirExecucao(d);
     var k = fi.split('|'), ficha = d.form.execucao[k[0]] = d.form.execucao[k[0]] || {};
@@ -1188,6 +1339,7 @@ corpo.addEventListener('change', function (ev) {
   if (t.hasAttribute('data-chegada')) { corrigirHora('chegada', t.value); return; }
   if (t.id === 'tqEquipe') { E.equipe = t.value; desenhar(); return; }
   if (t.getAttribute('data-foto') && d && d.estado === 'rascunho') { trocarFotoDoPS(d, t.getAttribute('data-foto'), t.files && t.files[0]); return; }
+  if (t.getAttribute('data-book') && d && d.estado === 'rascunho') { trocarFotoDoBook(d, t.getAttribute('data-book'), t.files && t.files[0]); return; }
   if (t.getAttribute('data-redesenha') && d && d.estado === 'rascunho') {
     if (t.hasAttribute('data-x')) { garantirExecucao(d); d.form.execucao[t.getAttribute('data-x')] = t.value; }
     else d.form[t.getAttribute('data-f')] = t.value;
@@ -1244,6 +1396,7 @@ corpo.addEventListener('click', function (ev) {
     if (a('data-tirar-p')) { x.pessoas.splice(+a('data-tirar-p'), 1); return salvarAgora().then(desenhar); }
     if (a('data-tirar-cod')) { x.codigos.splice(+a('data-tirar-cod'), 1); if (!x.codigos.length) x.codigos.push({ cod: '', qtd: '', adc: '' }); return salvarAgora().then(desenhar); }
     if (a('data-xs')) { garantirExecucao(d); x.execucao[a('data-xs')] = a('data-v'); return salvarAgora().then(desenhar); }
+    if (a('data-lugar')) { bookDo(d).sel = a('data-lugar'); return salvarAgora().then(desenhar); }
     if (a('data-verso-cod')) {
       var vazio = x.codigos.filter(function (c) { return !c.cod && !c.qtd; })[0];
       if (vazio) vazio.cod = a('data-verso-cod'); else x.codigos.push({ cod: a('data-verso-cod'), qtd: '', adc: '' });
@@ -1268,6 +1421,12 @@ corpo.addEventListener('click', function (ev) {
   if (acao === 'proteger') { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(preencherEnvio); return; }
   if (d && d.estado === 'rascunho') {
     var y = d.form;
+    if (acao === 'addLugar') {
+      var R2 = regrasDe(pacoteDe(d.dia)), bb = bookDo(d), novo = R2 && R2.estadoDoBookApp ? proximoLugar(estadoDoBook(d, R2), a('data-novo'), anteriorDoDiario(d)) : '';
+      if (!novo) return;
+      bb.extras.push(novo); bb.sel = novo; return salvarAgora().then(desenhar);
+    }
+    if (acao === 'tirarFotoBook') return tirarFotoDoBook(d, a('data-chave'));
     if (acao === 'addCod') { y.codigos.push({ cod: '', qtd: '', adc: '' }); return salvarAgora().then(desenhar); }
     if (acao === 'codCancelado') { var L = pacoteDe(d.dia).listas; y.codigos = [{ cod: L.cancelado, qtd: '1', adc: '' }]; return salvarAgora().then(desenhar); }
     if (acao === 'addPessoa') {
@@ -1315,7 +1474,7 @@ function limparVelhos() {
   var ficam = E.diarios.filter(function (d) { return velhos.indexOf(d) < 0; });
   var emUso = function (id) { return ficam.some(function (d) { return d.rosto === id; }); };
   return Promise.all(velhos.map(function (d) {
-    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), emUso(d.rosto) ? null : apagarFoto(d.rosto)]).then(function () { return apagarDiario(d.id); });
+    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), emUso(d.rosto) ? null : apagarFoto(d.rosto)].concat(idsDoBook(d).map(apagarFoto))).then(function () { return apagarDiario(d.id); });
   })).then(function () {
     var diaLimite = isoMaisDias(hojeLocal(), -3);
     return noBanco('config', 'readonly', function (s) { return s.getAllKeys(); }).then(function (chaves) {

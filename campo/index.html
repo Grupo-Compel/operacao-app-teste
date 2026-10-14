@@ -117,6 +117,15 @@
   details.bloco .dentro { padding:0 12px 12px; }
   details.bloco details.bloco { margin-top:12px; }
   .sit { font-size:12px; font-weight:700; padding:2px 9px; border-radius:12px; white-space:nowrap; } .sit.ok { background:var(--verde-claro); color:var(--verde); } .sit.falta { background:var(--ambar-claro); color:var(--ambar); }
+  /* 5c: o book da obra, as estruturas como botões coloridos (o quadro "Book da obra" do protótipo 3.0). */
+  .lugares { display:grid; grid-template-columns:repeat(auto-fill, minmax(66px, 1fr)); gap:6px; margin:8px 0 2px; }
+  .lugar { min-height:44px; border:2px solid #C9CED6; border-radius:8px; background:#fff; font-weight:700; font-size:14px; cursor:pointer; color:var(--tinta); }
+  .lugar.parcial { background:var(--ambar-claro); border-color:#E2B866; } .lugar.pronta { background:var(--verde-claro); border-color:#7CC7A0; color:var(--verde); }
+  .lugar.geral { background:#EEF0F3; } .lugar.sel { box-shadow:0 0 0 3px var(--grafite); }
+  .lugarSel { border:2px solid var(--grafite); border-radius:var(--raio); padding:12px; margin-top:12px; }
+  .lugarSel > .etiqueta:first-child { margin:-12px -12px 8px; padding:8px 12px; background:var(--grafite); color:#fff; border-radius:8px 8px 0 0; }
+  .foto.antes { border-style:solid; border-color:#7CC7A0; background:var(--verde-claro); }
+  .sit.vazio { background:#EEF0F3; color:var(--tinta-media); }
   footer { text-align:center; color:var(--tinta-fraca); font-size:12px; padding:6px 0 4px; }
 </style>
 </head>

@@ -8,7 +8,7 @@
    NADA DE DADO DA COMPEL NESTE ARQUIVO, nem endereço do servidor: tudo isso
    chega no celular (o link do supervisor e o pacote do dia) e fica só nele. */
 
-var VERSAO_APP = '5b.1 · 13/10/2026';
+var VERSAO_APP = '5c · 13/10/2026';
 var BANCO = 'operacao-campo';
 
 function abrirBanco() {
@@ -72,6 +72,20 @@ function pacoteDoDiario(d) {
     km: { saidaBase: x.kmSaida || '', chegadaCanteiro: x.kmChegada || '' }, fotos: [],
     /* 5b: a execução da obra (só na produção). O dia em horários vai à parte, no envio. */
     execucao: x.tipoDia === 'PRODUCAO' ? x.execucao || null : null };
+}
+
+/*
+ * 5c: o book do diário, no formato das regras do servidor (validarBookDoApp):
+ * as estruturas com a observação e as fotos com o lugar, a etiqueta e o item.
+ * d.book.fotos é { 'lugar|etiqueta|item': id da foto no celular }; o ID é o
+ * mesmo no servidor (a foto sobe com ele), e é por ele que o diário aponta.
+ */
+function retratoDoBook(d) {
+  var b = d.book || {}, fotos = b.fotos || {}, est = b.estruturas || {};
+  return {
+    estruturas: Object.keys(est).filter(function (k) { return String(est[k].obs || '').trim(); }).map(function (k) { return { id: k, obs: String(est[k].obs).trim() }; }),
+    fotos: Object.keys(fotos).filter(function (k) { return fotos[k]; }).map(function (k) { var c = k.split('|'); return { id: fotos[k], lugar: c[0], etiqueta: c[1], item: c.slice(2).join('|') }; })
+  };
 }
 
 /* Um pedido ao servidor. Texto puro (JSON), e não "application/json": é o que
@@ -138,8 +152,9 @@ function enviarDentroDaTrava(enviadoPor) {
         return enviarFotosDoDiario(cfg, d).then(function () {
           var p = pacoteDoDiario(d);
           p.fotos = [d.arquivos.PS_FRENTE, d.arquivos.PS_VERSO];
+          var rb = d.form.tipoDia === 'PRODUCAO' ? retratoDoBook(d) : { estruturas: [], fotos: [] };
           return postar(cfg.url, { acao: 'lancamento', token: cfg.token, pacote: p, rosto: d.arquivos.ROSTO, criadoEm: d.encerradoEm, enviadoPor: enviadoPor, tentativas: d.tentativas,
-                                   dia: d.diaEnviado || null });
+                                   dia: d.diaEnviado || null, book: { estruturas: rb.estruturas, fotos: rb.fotos.map(function (f) { return f.id; }) } });
         }).then(function (r) {
           d.resposta = r; d.ultimoErro = '';
           if (r.ok) { d.estado = 'enviado'; d.enviadoEm = new Date().toISOString(); d.enviadoPor = enviadoPor; resumo.enviados++; }
@@ -173,24 +188,28 @@ function enviarDentroDaTrava(enviadoPor) {
   }).then(fim, function (e) { fim(); throw e; });
 }
 
-/* As fotos de um diário que ainda não têm o ID do servidor. */
+/* As fotos de um diário que ainda não têm o ID do servidor (5c: e as do book, só na produção). */
 function enviarFotosDoDiario(cfg, d) {
   d.arquivos = d.arquivos || {};
-  var tipos = [['PS_FRENTE', d.fotos && d.fotos.FRENTE], ['PS_VERSO', d.fotos && d.fotos.VERSO], ['ROSTO', d.rosto]];
+  var tipos = [['PS_FRENTE', d.fotos && d.fotos.FRENTE], ['PS_VERSO', d.fotos && d.fotos.VERSO]];
+  if (d.form.tipoDia === 'PRODUCAO') retratoDoBook(d).fotos.forEach(function (f) { tipos.push(['BOOK|' + f.lugar + '|' + f.etiqueta + '|' + f.item, f.id, f]); });
+  tipos.push(['ROSTO', d.rosto]);
   var k = 0;
   function proxima() {
     if (k >= tipos.length) return Promise.resolve();
     var t = tipos[k++];
     if (d.arquivos[t[0]] || !t[1]) return proxima();
     return lerFoto(t[1]).then(function (f) {
-      if (!f || !f.blob) throw { msg: 'A foto ' + t[0] + ' sumiu do celular: abra o diário, tire de novo e encerre outra vez.' };
+      if (!f || !f.blob) throw { msg: 'A foto ' + (t[2] ? t[2].lugar + ' · ' + t[2].etiqueta + ' · ' + t[2].item : t[0]) + ' sumiu do celular: abra o diário, tire de novo e encerre outra vez.' };
       return blobParaDataUrl(f.blob).then(function (dados) {
-        return postar(cfg.url, { acao: 'foto', token: cfg.token, id: f.id, tipo: t[0], dia: d.dia, prefixo: d.form.prefixo, obra: d.form.obra, dados: dados });
+        var corpo = { acao: 'foto', token: cfg.token, id: f.id, tipo: t[2] ? 'BOOK' : t[0], dia: d.dia, prefixo: d.form.prefixo, obra: d.form.obra, dados: dados };
+        if (t[2]) { var m = f.meta || {}; Object.assign(corpo, { lugar: t[2].lugar, etiqueta: t[2].etiqueta, item: t[2].item, idDiario: d.id, lat: m.lat, lon: m.lon, precisao: m.precisao, tiradaEm: m.tiradaEm }); }
+        return postar(cfg.url, corpo);
       });
     }).then(function (r) {
       if (r.ok) { d.arquivos[t[0]] = r.arquivoId; return guardarDiario(d).then(proxima); }
       if (r.desligado) throw { desligado: true, msg: r.erro };
-      throw { msg: 'Foto ' + t[0] + ': ' + (r.erro || 'recusada') };
+      throw { msg: 'Foto ' + (t[2] ? t[2].lugar + ' · ' + t[2].etiqueta : t[0]) + ': ' + (r.erro || 'recusada') };
     });
   }
   return proxima();
