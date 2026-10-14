@@ -8,7 +8,7 @@
    NADA DE DADO DA COMPEL NESTE ARQUIVO, nem endereço do servidor: tudo isso
    chega no celular (o link do supervisor e o pacote do dia) e fica só nele. */
 
-var VERSAO_APP = '5c.1 · 14/10/2026';
+var VERSAO_APP = '5d · 14/10/2026';
 var BANCO = 'operacao-campo';
 
 function abrirBanco() {
@@ -142,22 +142,27 @@ function enviarDentroDaTrava(enviadoPor) {
     if (!cfg || !cfg.url || !cfg.token) { resumo.erro = 'Este celular ainda não está ligado.'; return resumo; }
     /* Desligado (cortado na tela do supervisor): não adianta insistir até ligar de novo. */
     if (cfg.desligado) { resumo.erro = 'Este celular foi desligado do sistema: peça um código novo ao supervisor.'; resumo.desligado = true; return resumo; }
-    return listarDiarios().then(function (todos) {
+    /* 5d: no celular da equipe, cada diário sobe com a sessão de quem o encerrou. */
+    return Promise.all([listarDiarios(), lerConfig('pessoas')]).then(function (v) {
+      var todos = v[0], pessoas = v[1] || {};
+      var sessaoDe = function (d) { return cfg.login ? ((pessoas[String(d.form.matEnc || '').replace(/\D/g, '').replace(/^0+/, '')] || {}).sessao || '') : ''; };
       var fila = todos.filter(function (d) { return d.estado === 'encerrado'; }).sort(function (a, b) { return a.encerradoEm < b.encerradoEm ? -1 : 1; });
       var i = 0, parar = false, refeito = {};
       function proximo() {
         if (parar || i >= fila.length) return Promise.resolve();
-        var d = fila[i++];
+        var d = fila[i++], ss = sessaoDe(d);
+        if (cfg.login && !ss) { d.ultimoErro = 'Para este diário subir, ' + (d.form.nomeEnc || 'quem o encerrou') + ' precisa entrar neste celular com sinal.'; resumo.erro = d.ultimoErro; return guardarDiario(d).then(proximo); }
         d.tentativas = (d.tentativas || 0) + 1;
-        return enviarFotosDoDiario(cfg, d).then(function () {
+        return enviarFotosDoDiario(cfg, d, ss).then(function () {
           var p = pacoteDoDiario(d);
           p.fotos = [d.arquivos.PS_FRENTE, d.arquivos.PS_VERSO];
           var rb = d.form.tipoDia === 'PRODUCAO' ? retratoDoBook(d) : { estruturas: [], fotos: [] };
-          return postar(cfg.url, { acao: 'lancamento', token: cfg.token, pacote: p, rosto: d.arquivos.ROSTO, criadoEm: d.encerradoEm, enviadoPor: enviadoPor, tentativas: d.tentativas,
+          return postar(cfg.url, { acao: 'lancamento', token: cfg.token, sessao: ss, pacote: p, rosto: d.arquivos.ROSTO, criadoEm: d.encerradoEm, enviadoPor: enviadoPor, tentativas: d.tentativas,
                                    dia: d.diaEnviado || null, book: { estruturas: rb.estruturas, fotos: rb.fotos.map(function (f) { return f.id; }) } });
         }).then(function (r) {
           d.resposta = r; d.ultimoErro = '';
           if (r.ok) { d.estado = 'enviado'; d.enviadoEm = new Date().toISOString(); d.enviadoPor = enviadoPor; resumo.enviados++; }
+          else if (r.semSessao) { d.ultimoErro = 'A entrada de ' + (d.form.nomeEnc || 'quem encerrou') + ' venceu: ele precisa entrar neste celular de novo, com sinal. ' + (r.erro || ''); resumo.erro = d.ultimoErro; }
           else if (r.desligado) { d.estado = 'encerrado'; d.ultimoErro = r.erro; resumo.desligado = true; resumo.erro = r.erro; parar = true; }
           else if (r.jaLancada) { d.estado = 'jaLancado'; d.ultimoErro = r.erro; }
           /* O servidor não tem as fotos DESTE celular (ligado de novo depois de
@@ -168,6 +173,8 @@ function enviarDentroDaTrava(enviadoPor) {
           return guardarDiario(d).then(proximo);
         }, function (e) {
           d.ultimoErro = e && e.msg ? e.msg : String(e && e.message || e);
+          /* A sessão de uma pessoa venceu: os diários dos outros seguem. */
+          if (e && e.semSessao) { resumo.erro = d.ultimoErro; return guardarDiario(d).then(proximo); }
           resumo.erro = d.ultimoErro;
           if (e && e.desligado) { resumo.desligado = true; }
           else if (e && e.rede) { if (e.comSinal) resumo.servidorFora = true; else resumo.semRede = true; }
@@ -189,7 +196,7 @@ function enviarDentroDaTrava(enviadoPor) {
 }
 
 /* As fotos de um diário que ainda não têm o ID do servidor (5c: e as do book, só na produção). */
-function enviarFotosDoDiario(cfg, d) {
+function enviarFotosDoDiario(cfg, d, sessao) {
   d.arquivos = d.arquivos || {};
   var tipos = [['PS_FRENTE', d.fotos && d.fotos.FRENTE], ['PS_VERSO', d.fotos && d.fotos.VERSO]];
   if (d.form.tipoDia === 'PRODUCAO') retratoDoBook(d).fotos.forEach(function (f) { tipos.push(['BOOK|' + f.lugar + '|' + f.etiqueta + '|' + f.item, f.id, f]); });
@@ -202,13 +209,14 @@ function enviarFotosDoDiario(cfg, d) {
     return lerFoto(t[1]).then(function (f) {
       if (!f || !f.blob) throw { msg: 'A foto ' + (t[2] ? t[2].lugar + ' · ' + t[2].etiqueta + ' · ' + t[2].item : t[0]) + ' sumiu do celular: abra o diário, tire de novo e encerre outra vez.' };
       return blobParaDataUrl(f.blob).then(function (dados) {
-        var corpo = { acao: 'foto', token: cfg.token, id: f.id, tipo: t[2] ? 'BOOK' : t[0], dia: d.dia, prefixo: d.form.prefixo, obra: d.form.obra, dados: dados };
+        var corpo = { acao: 'foto', token: cfg.token, sessao: sessao || '', id: f.id, tipo: t[2] ? 'BOOK' : t[0], dia: d.dia, prefixo: d.form.prefixo, obra: d.form.obra, dados: dados };
         if (t[2]) { var m = f.meta || {}; Object.assign(corpo, { lugar: t[2].lugar, etiqueta: t[2].etiqueta, item: t[2].item, idDiario: d.id, lat: m.lat, lon: m.lon, precisao: m.precisao, tiradaEm: m.tiradaEm }); }
         return postar(cfg.url, corpo);
       });
     }).then(function (r) {
       if (r.ok) { d.arquivos[t[0]] = r.arquivoId; return guardarDiario(d).then(proxima); }
       if (r.desligado) throw { desligado: true, msg: r.erro };
+      if (r.semSessao) throw { semSessao: true, msg: 'A entrada de ' + (d.form.nomeEnc || 'quem encerrou') + ' venceu: ele precisa entrar neste celular de novo, com sinal.' };
       throw { msg: 'Foto ' + (t[2] ? t[2].lugar + ' · ' + t[2].etiqueta : t[0]) + ': ' + (r.erro || 'recusada') };
     });
   }

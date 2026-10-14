@@ -35,7 +35,11 @@ var E = {
   equipe: '',           // a equipe escolhida, quando o encarregado tem mais de uma
   modoHoje: {},         // dia -> 'obra' | 'emergencia', o que a aba Hoje mostra (5b.1)
   toque: null,          // o registro do dia escolhido e ainda não confirmado (5b.1)
-  fechados: {}          // os blocos que o encarregado fechou na tela (5b.1)
+  fechados: {},         // os blocos que o encarregado fechou na tela (5b.1)
+  pessoa: null,         // quem entrou no celular da equipe (5d): { mat, nome, funcoes, prefixos, sessao, valeAte }
+  pessoas: {},          // as pessoas que já entraram neste celular: mat -> { nome, funcoes, prefixos, sessao, valeAte, verif, erros }
+  entrar: { modo: 'entrar' },  // a tela de entrar (5d)
+  substitutos: {}       // 'dia|mat': a pessoa disse que é o encarregado da equipe hoje (5d)
 };
 var REGRAS = {};        // geradoEm do pacote -> as funções de regra do servidor | { erro }
 
@@ -308,6 +312,8 @@ function aplicarDia(d) {
   var pac = pacoteDe(d.dia), R = regrasDe(pac);
   if (!R || !R.horariosDoDiaApp) return;
   var r = diaDaEquipe(d.dia, d.form.prefixo), h = R.horariosDoDiaApp(retratoDoDia(r)), x = d.form;
+  /* 5d: o diário em rascunho é de quem está no celular agora (o substituto que pegou o celular continua a folha). */
+  if (E.cfg && E.cfg.login && E.pessoa) { x.matEnc = E.pessoa.mat; x.nomeEnc = E.pessoa.nome; }
   x.expIni = h.expIni; x.expFim = h.expFim; x.almIni = h.almIni; x.almFim = h.almFim;
   x.kmSaida = r.kmSaida || ''; x.kmChegada = r.kmChegada || '';
   var o = x.tipoDia === 'PRODUCAO' ? h.porObra[alvoDoDiario(d, R)] : null;
@@ -482,9 +488,9 @@ function novoDiario(pac, f) {
   var prefixo = f ? f.p : ((pac.equipes || [])[0] || {}).p || '';
   var atividade = f ? (ATIVIDADE_DO_PAPEL[f.atividade] || 'Obra') : 'Obra';
   var x = {
-    prefixo: prefixo, matEnc: E.cfg.mat, nomeEnc: E.cfg.nome, tipoDia: 'PRODUCAO', placa: f ? f.placa || '' : '',
+    prefixo: prefixo, matEnc: quem().mat, nomeEnc: quem().nome, tipoDia: 'PRODUCAO', placa: f ? f.placa || '' : '',
     expIni: '', expFim: '', almIni: '', almFim: '', kmSaida: '', kmChegada: '',
-    pessoas: f ? (f.pessoas || []).filter(function (p) { return semZeros(p.mat) !== semZeros(E.cfg.mat); }).map(function (p) { return { mat: p.mat, nome: p.nome, estado: '', sugerido: true }; }) : [],
+    pessoas: f ? (f.pessoas || []).filter(function (p) { return semZeros(p.mat) !== semZeros(quem().mat); }).map(function (p) { return { mat: p.mat, nome: p.nome, estado: '', sugerido: true }; }) : [],
     dds: '', ddsHora: '', ddsQuem: '', contrato: (f && f.contrato) || pac.contratoPadrao || '',
     obra: f ? f.obra || '' : '', municipio: f ? f.municipio || '' : '', alim: f ? f.alm || '' : '', ponto: f ? f.ponto || '' : '',
     atividade: atividade, processo: processoPadrao(atividade, f && f.verso), processoMudado: false, status: '', ini: '', fim: '',
@@ -584,6 +590,7 @@ function desenhar() {
   $('rotEnvio').textContent = pend ? 'Envio (' + pend + ')' : 'Envio';
   var h;
   if (!E.cfg || E.ligar) { $('codTela').textContent = 'LIGAR'; h = telaLigar(); }
+  else if (precisaEntrar() && !E.cfg.desligado) { $('codTela').textContent = 'ENTRAR'; $('abas').classList.add('oculto'); h = telaEntrar(); }
   else {
     $('codTela').textContent = CODIGO_DA_ABA[E.aba];
     h = (E.versaoNova ? '<div class="aviso ok">Versão nova do app instalada. <button type="button" class="btn medio" data-acao="recarregar">Abrir a versão nova</button></div>' : '') +
@@ -612,7 +619,7 @@ function telaLigar() {
   var l = E.ligar || { codigo: '', url: E.cfg ? E.cfg.url : '' };
   var h = '<div class="cartao"><div class="etiqueta">Ligar este celular</div>' +
     '<p>O supervisor gera um código de 6 números na tela <b>Aparelhos do campo</b> e manda o link pelo WhatsApp. Abra o link <b>no Chrome</b> deste celular e toque em Ligar. Só uma vez: depois, o app abre direto, com ou sem sinal.</p>' +
-    (E.cfg && !E.cfg.desligado ? '<div class="aviso atencao">Este celular já está ligado para ' + esc(E.cfg.nome) + '. Ligar com outro código troca o dono do celular.</div>' : '') +
+    (E.cfg && !E.cfg.desligado ? '<div class="aviso atencao">Este celular já está ligado ' + (E.cfg.login ? 'na equipe ' + esc(E.cfg.prefixo) : 'para ' + esc(E.cfg.nome)) + '. Ligar com outro código troca o celular de dono.</div>' : '') +
     '<label for="ligCodigo">Código (6 números)</label><input id="ligCodigo" inputmode="numeric" maxlength="6" autocomplete="one-time-code" value="' + esc(l.codigo) + '">' +
     (l.url && ENDERECO_VALIDO.test(l.url) ? '' : '<label for="ligUrl">Endereço do servidor</label><input id="ligUrl" inputmode="url" autocomplete="off" value="' + esc(l.url || '') + '" placeholder="https://script.google.com/macros/s/…/exec"><div class="ajuda">Vem no link do supervisor. Se o link abriu sem ele, peça o link de novo.</div>') +
     '<div id="ligErro"></div>' +
@@ -638,7 +645,10 @@ function ligar() {
   $('ligErro').innerHTML = '<div class="aviso">Ligando…</div>';
   postar(url, { acao: 'ligar', codigo: codigo, aparelho: resumoDoAparelho() }, 45000).then(function (r) {
     if (!r.ok) return erro(r.erro || 'O servidor recusou o código.');
-    E.cfg = { url: url, token: r.token, aparelho: r.aparelho, mat: r.mat, nome: r.nome, base: r.base, ligadoEm: new Date().toISOString(), desligado: false };
+    E.cfg = { url: url, token: r.token, aparelho: r.aparelho, mat: r.mat, nome: r.nome, base: r.base, ligadoEm: new Date().toISOString(), desligado: false,
+              /* 5d: o celular da equipe pede a pessoa; o servidor de antes não manda "login" e o app segue sem. */
+              prefixo: r.prefixo || '', login: !!r.login };
+    if (E.cfg.login) { E.pessoa = null; gravarConfig('pessoa', null); }
     return gravarConfig('servidor', E.cfg).then(function () {
       E.ligar = null; E.aba = 'hoje'; E.dia = hojeLocal();
       /* O código já foi usado: tirá-lo do endereço evita que um "voltar" ou um favorito tente de novo. */
@@ -650,10 +660,137 @@ function ligar() {
   }, function (e) { erro((e && e.msg) || 'Não consegui falar com o servidor.'); });
 }
 
+// ---- Entrar (5d): a pessoa no celular da equipe
+/*
+ * O CELULAR É DA EQUIPE, E A PESSOA ENTRA (5d, 14/10/2026; 29_AcessoCampo.gs): a
+ * matrícula e uma senha de 4 a 6 números, que ela cria no primeiro acesso com o
+ * código que o supervisor gerou. O encarregado, o eletricista e, adiante, o
+ * inspetor entram no mesmo celular; o diário fica no nome de quem entrou e na
+ * equipe do celular.
+ *
+ * SEM SINAL: a primeira entrada de cada pessoa neste celular precisa de sinal;
+ * depois, o celular confere a senha com um verificador guardado (PBKDF2, nunca a
+ * senha), e cinco erros seguidos aqui pedem a entrada com sinal. A sessão que o
+ * servidor deu (30 dias) fica guardada por pessoa: o diário encerrado sobe com a
+ * sessão de quem o encerrou, mesmo que outra pessoa esteja usando o celular.
+ *
+ * O servidor de antes da 5d não liga o celular pela equipe: aí não há login, e o
+ * app segue como na 5a (o dono do celular é o encarregado).
+ */
+var VOLTAS_DO_VERIFICADOR = 100000, MAX_ERROS_SEM_SINAL = 5;
+function quem() {
+  if (E.cfg && E.cfg.login) return E.pessoa || { mat: '', nome: '' };
+  return { mat: E.cfg ? E.cfg.mat : '', nome: E.cfg ? E.cfg.nome : '' };
+}
+function precisaEntrar() { return !!(E.cfg && E.cfg.login && !E.pessoa && !E.ligar); }
+function hexDe(buf) { return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
+function verificadorDaSenha(senha, sal, voltas) {
+  var t = new TextEncoder();
+  return crypto.subtle.importKey('raw', t.encode(senha), 'PBKDF2', false, ['deriveBits'])
+    .then(function (k) { return crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: t.encode(sal), iterations: voltas }, k, 256); }).then(hexDe);
+}
+/* A pessoa entrou com sinal: guarda a sessão e o verificador da senha, e passa a ser quem está no celular. */
+function guardarPessoa(r, senha) {
+  var mat = semZeros(r.mat), sal = hexDe(crypto.getRandomValues(new Uint8Array(16)));
+  return verificadorDaSenha(senha, sal, VOLTAS_DO_VERIFICADOR).then(function (h) {
+    E.pessoas[mat] = { mat: mat, nome: r.nome, funcoes: r.funcoes || [], prefixos: r.prefixos || [], sessao: r.sessao, valeAte: r.valeAte, verif: { sal: sal, hash: h, voltas: VOLTAS_DO_VERIFICADOR }, erros: 0 };
+    E.pessoa = { mat: mat, nome: r.nome, funcoes: r.funcoes || [], prefixos: r.prefixos || [] };
+    return Promise.all([gravarConfig('pessoas', E.pessoas), gravarConfig('pessoa', E.pessoa)]);
+  });
+}
+function telaEntrar() {
+  var m = E.entrar.modo, erro = E.entrar.erro ? '<div class="aviso erro" id="erroEntrar">' + esc(E.entrar.erro) + '</div>' : '';
+  var h = '<div class="cartao"><div class="etiqueta">Celular da equipe ' + esc(E.cfg.prefixo) + '</div><p class="media">Cada pessoa entra com a <b>matrícula</b> e a <b>senha</b> dela. O encarregado, o eletricista e o inspetor usam o mesmo celular.</p></div>';
+  if (m === 'primeiro') {
+    h += '<div class="cartao"><div class="etiqueta">Primeiro acesso ou esqueci a senha</div><p class="media">Peça ao supervisor o <b>código de acesso</b> (6 números). Precisa de sinal.</p>' +
+      '<label for="paMat">Matrícula</label><input id="paMat" inputmode="numeric" maxlength="8" autocomplete="off" value="' + esc(E.entrar.mat || '') + '">' +
+      '<label for="paCodigo">Código de acesso</label><input id="paCodigo" inputmode="numeric" maxlength="6" autocomplete="one-time-code">' +
+      '<label for="paSenha">Crie a senha (4 a 6 números)</label><input id="paSenha" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password">' +
+      '<label for="paSenha2">Repita a senha</label><input id="paSenha2" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password">' + erro +
+      '<button type="button" class="btn" data-acao="primeiroAcesso">Criar a senha e entrar</button><button type="button" class="btn fantasma" data-acao="modoEntrar">Voltar</button></div>';
+  } else {
+    h += '<div class="cartao"><div class="etiqueta">Entrar</div>' +
+      '<label for="enMat">Matrícula</label><input id="enMat" inputmode="numeric" maxlength="8" autocomplete="username" value="' + esc(E.entrar.mat || '') + '">' +
+      '<label for="enSenha">Senha</label><input id="enSenha" type="password" inputmode="numeric" maxlength="6" autocomplete="current-password">' + erro +
+      '<button type="button" class="btn" data-acao="entrar">Entrar</button>' +
+      '<button type="button" class="btn fantasma" data-acao="modoPrimeiro">Primeiro acesso ou esqueci a senha</button></div>';
+    var ja = Object.keys(E.pessoas).map(function (k) { return E.pessoas[k]; });
+    if (ja.length) h += '<div class="ajuda" style="text-align:center">Já entraram neste celular: ' + esc(ja.map(function (p) { return p.nome.split(' ')[0] + ' (' + p.mat + ')'; }).join(', ')) + '. Sem sinal, só elas entram.</div>';
+  }
+  return h + '<footer>Compel · Campo · versão ' + esc(VERSAO_APP) + '</footer>';
+}
+function erroDeEntrada(t) { E.entrar.erro = t; desenhar(); }
+function entrar() {
+  var mat = semZeros(($('enMat') || {}).value), senha = String(($('enSenha') || {}).value || '');
+  E.entrar.mat = mat;
+  if (!mat || !/^\d{4,6}$/.test(senha)) return erroDeEntrada('A matrícula e a senha (de 4 a 6 números).');
+  var semSinal = function () {
+    var p = E.pessoas[mat];
+    if (!p || !p.verif) return erroDeEntrada('Sem sinal: a primeira entrada desta matrícula neste celular precisa de sinal (o Wi-Fi da base).');
+    if ((p.erros || 0) >= MAX_ERROS_SEM_SINAL) return erroDeEntrada('Senha errada ' + MAX_ERROS_SEM_SINAL + ' vezes sem sinal: entre com sinal.');
+    return verificadorDaSenha(senha, p.verif.sal, p.verif.voltas).then(function (h) {
+      if (h !== p.verif.hash) { p.erros = (p.erros || 0) + 1; return gravarConfig('pessoas', E.pessoas).then(function () { erroDeEntrada('Senha errada (' + p.erros + ' de ' + MAX_ERROS_SEM_SINAL + ', sem sinal).'); }); }
+      p.erros = 0; E.pessoa = { mat: mat, nome: p.nome, funcoes: p.funcoes, prefixos: p.prefixos }; E.entrar = { modo: 'entrar' };
+      return Promise.all([gravarConfig('pessoas', E.pessoas), gravarConfig('pessoa', E.pessoa)]).then(depoisDeEntrar);
+    });
+  };
+  if (!navigator.onLine) return semSinal();
+  E.entrar.erro = ''; $('corpo').querySelector('[data-acao="entrar"]').disabled = true;
+  return postar(E.cfg.url, { acao: 'entrar', token: E.cfg.token, mat: mat, senha: senha }, 30000).then(function (r) {
+    if (r.desligado) { E.cfg.desligado = true; return gravarConfig('servidor', E.cfg).then(desenhar); }
+    if (!r.ok) return erroDeEntrada(r.erro || 'O servidor recusou a entrada.');
+    E.entrar = { modo: 'entrar' };
+    return guardarPessoa(r, senha).then(depoisDeEntrar);
+  }, function (e) { return e && e.rede ? semSinal() : erroDeEntrada((e && e.msg) || 'Não consegui falar com o servidor.'); });
+}
+function primeiroAcesso() {
+  var mat = semZeros(($('paMat') || {}).value), codigo = String(($('paCodigo') || {}).value || '').replace(/\D/g, ''), s1 = String(($('paSenha') || {}).value || ''), s2 = String(($('paSenha2') || {}).value || '');
+  E.entrar.mat = mat;
+  if (!mat) return erroDeEntrada('A matrícula.');
+  if (!/^\d{6}$/.test(codigo)) return erroDeEntrada('O código de acesso tem 6 números.');
+  if (!/^\d{4,6}$/.test(s1)) return erroDeEntrada('A senha tem de 4 a 6 números.');
+  if (s1 !== s2) return erroDeEntrada('As duas senhas não são iguais.');
+  if (!navigator.onLine) return erroDeEntrada('Sem sinal: o primeiro acesso precisa de sinal (o Wi-Fi da base).');
+  return postar(E.cfg.url, { acao: 'primeiroAcesso', token: E.cfg.token, mat: mat, codigo: codigo, senha: s1 }, 30000).then(function (r) {
+    if (r.desligado) { E.cfg.desligado = true; return gravarConfig('servidor', E.cfg).then(desenhar); }
+    if (!r.ok) return erroDeEntrada(r.erro || 'O servidor recusou.');
+    E.entrar = { modo: 'entrar' };
+    return guardarPessoa(r, s1).then(depoisDeEntrar);
+  }, function (e) { erroDeEntrada((e && e.msg) || 'Não consegui falar com o servidor.'); });
+}
+function depoisDeEntrar() {
+  E.aba = 'hoje'; desenhar();
+  /* O que estava na fila esperando a entrada desta pessoa sobe agora. */
+  if (navigator.onLine) enviar('entrou ' + E.pessoa.mat);
+}
+/* Sair: a próxima pessoa entra. A sessão continua guardada, para os diários que esta pessoa encerrou subirem. */
+function sairPessoa() {
+  var p = E.pessoa && E.pessoas[E.pessoa.mat];
+  E.pessoa = null; E.aberto = null; E.entrar = { modo: 'entrar' };
+  return Promise.all([gravarConfig('pessoa', null), gravarConfig('aberto', null)]).then(desenhar);
+}
+/* O encarregado da equipe na formação, ou quem disse que está no lugar dele hoje (o João faltou). */
+function ehEncarregadoDaEquipe(dia) {
+  if (!E.cfg || !E.cfg.login) return true;
+  var pac = pacoteDe(dia), enc = pac && pac.encarregadoDaEquipe;
+  return !enc || semZeros(enc.mat) === semZeros(quem().mat);
+}
+function ehSubstituto(dia) { return !ehEncarregadoDaEquipe(dia) && !!E.substitutos[dia + '|' + semZeros(quem().mat)]; }
+function podeLancar(dia) { return ehEncarregadoDaEquipe(dia) || ehSubstituto(dia); }
+function cartaoDaFuncao(dia) {
+  var pac = pacoteDe(dia), enc = pac && pac.encarregadoDaEquipe;
+  return '<div class="cartao" id="f-funcao"><div class="etiqueta">O diário da equipe ' + esc(E.cfg.prefixo) + '</div>' +
+    '<p>O encarregado da equipe no mês é <b>' + esc(enc ? enc.nome : '?') + '</b>. O diário (o PS) é ele quem lança.</p>' +
+    '<p class="media">Se ele não veio hoje e é você quem está à frente da equipe, toque abaixo: o diário vai no seu nome, marcado como <b>substituto</b>, e o supervisor confere.</p>' +
+    '<button type="button" class="btn" data-acao="souSubstituto">Sou o encarregado da equipe hoje</button>' +
+    '<div class="aviso" style="margin-top:10px">Eletricista e inspetor: os checklists de EPI e luvas chegam numa próxima versão do app.</div></div>';
+}
+
 // ---- Hoje (OPE-14)
 function telaHoje() {
   var dia = E.dia, pac = pacoteDe(dia), hoje = hojeLocal();
-  var h = '<div class="cartao"><div class="etiqueta">Encarregado</div><b>' + esc(E.cfg.nome) + '</b> <span class="fraco">· ' + esc(E.cfg.mat) + ' · ' + esc(pac && pac.base ? pac.base.nome : E.cfg.base) + '</span>' +
+  var h = '<div class="cartao"><div class="etiqueta">' + (E.cfg.login ? 'Celular da equipe ' + esc(E.cfg.prefixo) : 'Encarregado') + '</div><b>' + esc(quem().nome) + '</b> <span class="fraco">· ' + esc(quem().mat) + ' · ' + esc(pac && pac.base ? pac.base.nome : E.cfg.base) + '</span>' +
+    (E.cfg.login ? ' <button type="button" class="link" data-acao="sairPessoa">Sair (trocar de pessoa)</button>' : '') +
     '<div class="dias" style="margin-top:10px">' + [[hoje, 'Hoje'], [isoMaisDias(hoje, -1), 'Ontem']].map(function (x) {
       return '<button type="button" class="btn medio ' + (dia === x[0] ? '' : 'fantasma') + '" data-dia="' + x[0] + '">' + x[1] + ' · ' + brDe(x[0]).slice(0, 5) + '</button>'; }).join('') + '</div>' +
     '<div class="ajuda">' + (pac ? 'Pacote do dia baixado em ' + esc(pac.geradoEm) + '.' : 'O pacote deste dia ainda não está no celular.') + '</div>' +
@@ -675,6 +812,7 @@ function telaHoje() {
    * primeira pergunta é o que a equipe fez: obra (com o número de folhas
    * programadas) ou emergência (com o número de folhas abertas).
    */
+  if (!podeLancar(dia)) return h + cartaoDaFuncao(dia);
   var folhas = (pac.folhas || []).slice().sort(function (a, b) { return String(a.hi || '99') < String(b.hi || '99') ? -1 : 1; });
   var extras = E.diarios.filter(function (d) { return d.dia === dia && d.extra; });
   var modo = E.modoHoje[dia] || (extras.length && !folhas.length ? 'emergencia' : folhas.length ? 'obra' : '');
@@ -791,6 +929,7 @@ function listaDeFolhas(info) {
 function telaDiario() {
   var d = E.aberto, info = diaAtual();
   if (!info) return '<div class="cartao">Sem o pacote do dia, não há equipe nem folhas. Baixe o pacote na aba <b>Hoje</b>.</div>';
+  if (!podeLancar(info.dia)) return cartaoDaFuncao(info.dia);
   var h = cartaoDoDia(info);
   if (!d) {
     var lf = listaDeFolhas(info);
@@ -809,7 +948,7 @@ function telaDiario() {
   var n = 0, cab = function (t) { return '<div class="etiqueta"><span class="n">' + (++n) + '</span>' + t + '</div>'; };
   /* 1. a folha */
   h += '<div class="cartao secao">' + cab(f ? 'Folha da obra ' + esc(f.obra || '—') : 'Folha de emergência (sem programação)') + '<div class="fraco" style="margin-bottom:4px">' + (f ? esc(f.codigo) + ' · ' : '') + esc(brDe(d.dia)) + '</div>' +
-    '<div><b>' + esc(E.cfg.nome) + '</b> <span class="fraco">· encarregado · ' + esc(E.cfg.mat) + '</span></div>' +
+    '<div><b>' + esc(quem().nome) + '</b> <span class="fraco">· encarregado' + (ehSubstituto(d.dia) ? ' substituto' : '') + ' · ' + esc(quem().mat) + '</span></div>' +
     '<div id="f-prefixo">' + (f ? '<div class="media">Equipe <b>' + esc(x.prefixo) + '</b></div>' :
       '<label for="i-prefixo">Equipe (prefixo)</label><select id="i-prefixo" data-f="prefixo" data-redesenha="1">' + opcoes((pac.equipes || []).map(function (e) { return [e.p, e.p + (e.t ? ' · ' + e.t : '')]; }), x.prefixo, 'Escolha a equipe') + '</select>') + '</div>' +
     campoTexto('placa', 'Placa da viatura', x, ' maxlength="8" style="text-transform:uppercase"') +
@@ -825,7 +964,7 @@ function telaDiario() {
     '<div class="ajuda">Saem do dia em horários, lá em cima: para mudar, corrija os registros do dia.</div></div>';
 
   /* 3. componentes */
-  var naLista = {}; x.pessoas.forEach(function (p) { naLista[semZeros(p.mat)] = 1; }); naLista[semZeros(E.cfg.mat)] = 1;
+  var naLista = {}; x.pessoas.forEach(function (p) { naLista[semZeros(p.mat)] = 1; }); naLista[semZeros(quem().mat)] = 1;
   var paraAdd = (pac.pessoasDaBase || []).filter(function (p) { return !naLista[semZeros(p.mat)]; });
   h += '<div class="cartao secao" id="f-pessoas">' + cab('Componentes da equipe') + '<div class="ajuda" style="margin:-2px 0 6px">Marque cada um: <b>Foi</b> ou <b>Faltou</b>.</div>' +
     (x.pessoas.length ? x.pessoas.map(function (p, i) {
@@ -1061,7 +1200,7 @@ function trocarFotoDoBook(d, chave, arquivo) {
   lerPosicao().then(function (pos) {
     var linhas = [tirada.toLocaleString('pt-BR') + (pos ? '   ·   ' + utmDe(pos.lat, pos.lon) : ''),
       ['Obra ' + (d.form.obra || '—'), lugar === 'Geral' ? 'GERAL' : lugar.replace(/^(FP|EQ)(\d)/, '$1 $2')].join('   ·   '),
-      etq + ' · ' + item, [d.form.prefixo, 'Enc. ' + E.cfg.nome].filter(Boolean).join('   ·   ')];
+      etq + ' · ' + item, [d.form.prefixo, 'Enc. ' + quem().nome].filter(Boolean).join('   ·   ')];
     return processarFoto(arquivo, LADOS_FOTO_PS, TETO_FOTO_PS, linhas).then(function (r) {
       var id = novoId(), antiga = b.fotos[chave];
       return guardarFoto({ id: id, blob: r.blob, tipo: 'BOOK', diario: d.id, criadoEm: tirada.toISOString(),
@@ -1106,6 +1245,9 @@ function nomeDaFolha(d) { return d.form.tipoDia === 'PLANTAO' ? 'plantão' : d.f
  * dia, então as folhas do dia encerram juntas, com uma foto do rosto só.
  */
 function telaEncerrar() {
+  /* 5d: só o encarregado da equipe (ou quem está no lugar dele hoje) encerra o dia. */
+  var info0 = diaAtual();
+  if (info0 && !podeLancar(info0.dia)) return cartaoDaFuncao(info0.dia);
   var info = diaAtual();
   if (!info) return '<div class="cartao">Sem o pacote do dia, não há o que encerrar. Baixe o pacote na aba <b>Hoje</b>.</div>';
   var doDia = diariosDoDia(info.dia, info.prefixo), rasc = doDia.filter(function (d) { return d.estado === 'rascunho'; });
@@ -1188,7 +1330,7 @@ function encerrarODia(arquivo) {
   if (!rasc.length || rasc.some(function (d) { return conferirDiario(d).erros.length; })) { desenhar(); return; }
   $('estadoRosto').textContent = 'preparando a foto…';
   var r = diaDaEquipe(info.dia, info.prefixo), retrato = retratoDoDia(r), quando = new Date().toISOString();
-  var linhas = [new Date().toLocaleString('pt-BR'), E.cfg.nome + ' · ' + E.cfg.mat, 'encerrou ' + info.prefixo + ' · ' + brDe(info.dia)];
+  var linhas = [new Date().toLocaleString('pt-BR'), quem().nome + ' · ' + quem().mat, 'encerrou ' + info.prefixo + ' · ' + brDe(info.dia)];
   processarFoto(arquivo, LADOS_FOTO_ROSTO, TETO_FOTO_ROSTO, linhas).then(function (ft) {
     var id = novoId();
     return guardarFoto({ id: id, blob: ft.blob, tipo: 'ROSTO', diario: rasc[0].id, criadoEm: quando }).then(function () {
@@ -1269,7 +1411,8 @@ function telaEnvio() {
       (d.estado === 'encerrado' && d.ultimoErro ? '<div class="ajuda">' + esc(d.ultimoErro) + (d.tentativas ? ' (' + d.tentativas + ' tentativa(s))' : '') + '</div>' : '') + '</li>';
   }).join('') + '</ul>' : '<p class="media">Nenhum ainda.</p>') + '<div class="ajuda">Os enviados saem do celular depois de ' + DIAS_GUARDANDO_ENVIADOS + ' dias.</div></div>';
   h += '<div class="cartao"><div class="etiqueta">Este celular</div><dl class="resumo">' +
-    '<dt>Encarregado</dt><dd>' + esc(E.cfg.nome) + ' · ' + esc(E.cfg.mat) + '</dd><dt>Base</dt><dd>' + esc(E.cfg.base) + '</dd>' +
+    '<dt>' + (E.cfg.login ? 'Celular da equipe' : 'Encarregado') + '</dt><dd>' + esc(E.cfg.login ? E.cfg.prefixo : E.cfg.nome + ' · ' + E.cfg.mat) + '</dd>' +
+    (E.cfg.login && E.pessoa ? '<dt>Quem entrou</dt><dd>' + esc(E.pessoa.nome) + ' · ' + esc(E.pessoa.mat) + '</dd>' : '') + '<dt>Base</dt><dd>' + esc(E.cfg.base) + '</dd>' +
     '<dt>Celular</dt><dd>' + esc(E.cfg.aparelho) + (E.cfg.desligado ? ' · <b>desligado</b>' : '') + '</dd><dt>Ligado em</dt><dd>' + esc(horaDeIso(E.cfg.ligadoEm)) + '</dd>' +
     '<dt>Versão</dt><dd>' + esc(VERSAO_APP) + '</dd><dt>Sem sinal</dt><dd>' + (navigator.serviceWorker && navigator.serviceWorker.controller ? 'funciona (cópia guardada)' : 'ainda não: abra uma vez com sinal') + '</dd>' +
     '<dt>Segundo plano</dt><dd>' + (('serviceWorker' in navigator) && ('SyncManager' in window) ? 'envia sozinho quando o sinal volta' : 'este navegador não envia fechado: abra o app com sinal') + '</dd>' +
@@ -1359,7 +1502,7 @@ corpo.addEventListener('toggle', function (ev) {
 function trocarFotoDoPS(d, lado, arquivo) {
   if (!arquivo) return;
   $('estadoFoto').textContent = 'preparando a foto…';
-  var x = d.form, linhas = [new Date().toLocaleString('pt-BR'), 'PS ' + (lado === 'FRENTE' ? 'FRENTE' : 'VERSO') + ' · ' + brDe(d.dia), [x.prefixo, x.obra, E.cfg.nome].filter(Boolean).join('   ·   ')];
+  var x = d.form, linhas = [new Date().toLocaleString('pt-BR'), 'PS ' + (lado === 'FRENTE' ? 'FRENTE' : 'VERSO') + ' · ' + brDe(d.dia), [x.prefixo, x.obra, quem().nome].filter(Boolean).join('   ·   ')];
   processarFoto(arquivo, LADOS_FOTO_PS, TETO_FOTO_PS, linhas).then(function (r) {
     var id = novoId(), antiga = d.fotos[lado];
     return guardarFoto({ id: id, blob: r.blob, tipo: 'PS_' + lado, diario: d.id, criadoEm: new Date().toISOString() }).then(function () {
@@ -1408,6 +1551,12 @@ corpo.addEventListener('click', function (ev) {
   var acao = a('data-acao');
   if (!acao) return;
   if (acao === 'ligar') return ligar();
+  if (acao === 'entrar') return entrar();
+  if (acao === 'primeiroAcesso') return primeiroAcesso();
+  if (acao === 'modoPrimeiro') { E.entrar = { modo: 'primeiro', mat: E.entrar.mat }; return desenhar(); }
+  if (acao === 'modoEntrar') { E.entrar = { modo: 'entrar', mat: E.entrar.mat }; return desenhar(); }
+  if (acao === 'sairPessoa') return sairPessoa();
+  if (acao === 'souSubstituto') { E.substitutos[E.dia + '|' + semZeros(quem().mat)] = new Date().toISOString(); return gravarConfig('substitutos', E.substitutos).then(desenhar); }
   if (acao === 'cancelarLigar') { E.ligar = null; try { history.replaceState(null, '', location.pathname); } catch (e) { } return desenhar(); }
   if (acao === 'religar') { E.ligar = { codigo: '', url: E.cfg.url }; return desenhar(); }
   if (acao === 'recarregar') return location.reload();
@@ -1434,7 +1583,7 @@ corpo.addEventListener('click', function (ev) {
     if (acao === 'addPessoa') {
       var pac = pacoteDe(d.dia), mat = semZeros($('addPessoa').value || $('addMat').value);
       if (!mat) return;
-      if (mat === semZeros(E.cfg.mat) || y.pessoas.some(function (p) { return semZeros(p.mat) === mat; })) { $('addMat').value = ''; return; }
+      if (mat === semZeros(quem().mat) || y.pessoas.some(function (p) { return semZeros(p.mat) === mat; })) { $('addMat').value = ''; return; }
       var p = (pac.pessoasDaBase || []).filter(function (q) { return semZeros(q.mat) === mat; })[0];
       y.pessoas.push({ mat: p ? p.mat : mat, nome: p ? p.nome : '', estado: 'foi', sugerido: false });
       return salvarAgora().then(desenhar);
@@ -1505,6 +1654,8 @@ E.dia = hojeLocal();
 E.ligar = lerLink();
 lerConfig('servidor').then(function (c) {
   E.cfg = c;
+  return Promise.all([lerConfig('pessoa'), lerConfig('pessoas'), lerConfig('substitutos')]).then(function (v) { E.pessoa = v[0] || null; E.pessoas = v[1] || {}; E.substitutos = v[2] || {}; });
+}).then(function () {
   return recarregarDiarios();
 }).then(function () {
   return Promise.all([carregarPacotesGuardados(), carregarDias(), lerConfig('aberto').then(function (id) { E.aberto = id ? E.diarios.filter(function (d) { return d.id === id; })[0] || null : null; })]);
