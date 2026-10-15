@@ -8,7 +8,7 @@
    NADA DE DADO DA COMPEL NESTE ARQUIVO, nem endereço do servidor: tudo isso
    chega no celular (o link do supervisor e o pacote do dia) e fica só nele. */
 
-var VERSAO_APP = '5d · 14/10/2026';
+var VERSAO_APP = '6d · 15/10/2026';
 var BANCO = 'operacao-campo';
 
 function abrirBanco() {
@@ -200,6 +200,12 @@ function enviarFotosDoDiario(cfg, d, sessao) {
   d.arquivos = d.arquivos || {};
   var tipos = [['PS_FRENTE', d.fotos && d.fotos.FRENTE], ['PS_VERSO', d.fotos && d.fotos.VERSO]];
   if (d.form.tipoDia === 'PRODUCAO') retratoDoBook(d).fotos.forEach(function (f) { tipos.push(['BOOK|' + f.lugar + '|' + f.etiqueta + '|' + f.item, f.id, f]); });
+  /* 6d: as fotos trocadas sobem como histórico do book. Não entram no diário, e não seguram o envio: a que sumiu do
+     celular, ou que o servidor recusou, fica de fora (o diário vale sem ela). */
+  if (d.form.tipoDia === 'PRODUCAO') ((d.book || {}).trocadas || []).forEach(function (t) {
+    var c = String(t.chave).split('|');
+    tipos.push(['TROCADA|' + t.id, t.id, { lugar: c[0], etiqueta: c[1], item: c.slice(2).join('|'), historico: true }]);
+  });
   tipos.push(['ROSTO', d.rosto]);
   var k = 0;
   function proxima() {
@@ -207,6 +213,7 @@ function enviarFotosDoDiario(cfg, d, sessao) {
     var t = tipos[k++];
     if (d.arquivos[t[0]] || !t[1]) return proxima();
     return lerFoto(t[1]).then(function (f) {
+      if ((!f || !f.blob) && t[2] && t[2].historico) return { ok: true, arquivoId: 'SUMIU' };
       if (!f || !f.blob) throw { msg: 'A foto ' + (t[2] ? t[2].lugar + ' · ' + t[2].etiqueta + ' · ' + t[2].item : t[0]) + ' sumiu do celular: abra o diário, tire de novo e encerre outra vez.' };
       return blobParaDataUrl(f.blob).then(function (dados) {
         var corpo = { acao: 'foto', token: cfg.token, sessao: sessao || '', id: f.id, tipo: t[2] ? 'BOOK' : t[0], dia: d.dia, prefixo: d.form.prefixo, obra: d.form.obra, dados: dados };
@@ -215,6 +222,7 @@ function enviarFotosDoDiario(cfg, d, sessao) {
       });
     }).then(function (r) {
       if (r.ok) { d.arquivos[t[0]] = r.arquivoId; return guardarDiario(d).then(proxima); }
+      if (t[2] && t[2].historico && !r.desligado && !r.semSessao) { d.arquivos[t[0]] = 'RECUSADA'; return guardarDiario(d).then(proxima); }
       if (r.desligado) throw { desligado: true, msg: r.erro };
       if (r.semSessao) throw { semSessao: true, msg: 'A entrada de ' + (d.form.nomeEnc || 'quem encerrou') + ' venceu: ele precisa entrar neste celular de novo, com sinal.' };
       throw { msg: 'Foto ' + (t[2] ? t[2].lugar + ' · ' + t[2].etiqueta : t[0]) + ': ' + (r.erro || 'recusada') };

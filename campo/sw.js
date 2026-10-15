@@ -9,7 +9,7 @@
    POST respondido do cache seria um "enviado" que não chegou. */
 importScripts('fila.js');
 
-var VERSAO_CACHE = 'operacao-campo-5d-1';
+var VERSAO_CACHE = 'operacao-campo-6d-1';
 var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './manifest.webmanifest', './icone-192.png', './icone-512.png'];
 
 self.addEventListener('install', function (e) {

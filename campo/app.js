@@ -1098,7 +1098,12 @@ function cartaoDaExecucao(d, pac, cab) {
  * O GPS É LIDO NA HORA DA FOTO, e só nela (conceito, 22.3: não gastar bateria),
  * com prazo curto: sem posição, a foto sai assim mesmo, sem a coordenada.
  */
-function bookDo(d) { d.book = d.book || { estruturas: {}, fotos: {}, extras: [], sel: '' }; d.book.extras = d.book.extras || []; return d.book; }
+function bookDo(d) { d.book = d.book || { estruturas: {}, fotos: {}, extras: [], sel: '' }; d.book.extras = d.book.extras || []; d.book.trocadas = d.book.trocadas || []; return d.book; }
+/* 6d (15/10/2026): a foto trocada não se perde. O Dalton pediu o histórico das fotos ("quando houver mais de uma
+   foto quero escolher qual vai para o book"): a anterior fica guardada e sobe junto, como histórico, sem entrar no
+   diário. Só as 3 últimas de cada item: o celular tem espaço contado, e quem tirou cinco vezes a mesma foto quer
+   uma das últimas. */
+var TROCADAS_POR_ITEM_DO_BOOK = 3;
 function anteriorDoDiario(d) { var f = folhaDoPacote(pacoteDe(d.dia), d.codigo); return (f && f.book) || { previstas: [], lugares: {}, geral: {} }; }
 function estadoDoBook(d, R) {
   var e = R.estadoDoBookApp(retratoDoBook(d), anteriorDoDiario(d)), b = bookDo(d), tem = {};
@@ -1202,12 +1207,17 @@ function trocarFotoDoBook(d, chave, arquivo) {
       ['Obra ' + (d.form.obra || '—'), lugar === 'Geral' ? 'GERAL' : lugar.replace(/^(FP|EQ)(\d)/, '$1 $2')].join('   ·   '),
       etq + ' · ' + item, [d.form.prefixo, 'Enc. ' + quem().nome].filter(Boolean).join('   ·   ')];
     return processarFoto(arquivo, LADOS_FOTO_PS, TETO_FOTO_PS, linhas).then(function (r) {
-      var id = novoId(), antiga = b.fotos[chave];
+      var id = novoId(), antiga = b.fotos[chave], sobra = null;
       return guardarFoto({ id: id, blob: r.blob, tipo: 'BOOK', diario: d.id, criadoEm: tirada.toISOString(),
         meta: { lugar: lugar, etiqueta: etq, item: item, lat: pos ? pos.lat : null, lon: pos ? pos.lon : null, precisao: pos ? pos.precisao : null, tiradaEm: tirada.toISOString() } }).then(function () {
         b.fotos[chave] = id;
         if (d.arquivos) delete d.arquivos['BOOK|' + chave];
-        return guardarDiario(d).then(function () { return apagarFoto(antiga); });
+        if (antiga) {
+          b.trocadas.push({ id: antiga, chave: chave });
+          var doItem = b.trocadas.filter(function (t) { return t.chave === chave; });
+          if (doItem.length > TROCADAS_POR_ITEM_DO_BOOK) { sobra = doItem[0].id; b.trocadas = b.trocadas.filter(function (t) { return t.id !== sobra; }); }
+        }
+        return guardarDiario(d).then(function () { return apagarFoto(sobra); });
       });
     });
   }).then(desenhar).catch(function (e) { aviso('Não consegui preparar a foto: ' + (e && e.message || e)); });
@@ -1225,7 +1235,10 @@ function resumoDoBook(d) {
   return r.fotos.length ? r.fotos.length + (r.fotos.length === 1 ? ' foto: ' : ' fotos: ') + lugares.join(', ') : 'sem fotos';
 }
 /* As fotos do book de um diário (para apagar junto com ele). */
-function idsDoBook(d) { var f = (d.book || {}).fotos || {}; return Object.keys(f).map(function (k) { return f[k]; }).filter(Boolean); }
+function idsDoBook(d) {
+  var f = (d.book || {}).fotos || {};
+  return Object.keys(f).map(function (k) { return f[k]; }).concat(((d.book || {}).trocadas || []).map(function (t) { return t.id; })).filter(Boolean);
+}
 
 function itensDaBusca(pac, termo, verso) {
   termo = String(termo || '').trim().toUpperCase();
