@@ -86,7 +86,7 @@ function regrasDe(pac) {
   var k = pac.geradoEm + '|' + pac.dia;
   if (!REGRAS[k]) {
     /* As da 5b e as da 5c só existem no pacote do servidor da 5b e da 5c: o pacote antigo abre, e o app pede para baixar de novo. */
-    var opc = ['validarDiaDoApp', 'horariosDoDiaApp', 'alvoDoDiarioApp', 'faixaDaEsperaCOD', 'validarBookDoApp', 'estadoDoBookApp', 'etiquetasDoLugarApp', 'casaEquipamentoApp'];
+    var opc = ['validarDiaDoApp', 'horariosDoDiaApp', 'alvoDoDiarioApp', 'faixaDaEsperaCOD', 'validarBookDoApp', 'estadoDoBookApp', 'etiquetasDoLugarApp', 'casaEquipamentoApp', 'ehEmergenciaApp'];
     try { REGRAS[k] = new Function(pac.regras + '\nreturn { validarLancamentoPS: validarLancamentoPS, chaveDoLancamentoPS: chaveDoLancamentoPS,' +
       opc.map(function (n) { return ' ' + n + ': typeof ' + n + ' === "function" ? ' + n + ' : null'; }).join(',') + ' };')(); }
     catch (e) { REGRAS[k] = { erro: 'As regras do pacote não abriram neste celular (' + e.message + '). Baixe o pacote de novo.' }; }
@@ -259,8 +259,10 @@ function carregarDias() {
 function retratoDoDia(r) {
   /* 6e (15/10/2026): vão também o momento do toque da chegada e quando a hora foi corrigida. O Dalton quer
      comparar a hora informada com a hora em que o botão foi tocado ("se ele está burlando os horários"). */
-  return { blocos: r.blocos.map(function (b) { return { t: b.t, ini: b.ini, obra: b.obra || '', motivo: b.motivo || '', obs: b.obs || '', tocadoEm: b.tocadoEm || '', corrigidoEm: b.corrigidoEm || '' }; }),
-           chegada: r.chegada || '', kmSaida: r.kmSaida || '', kmChegada: r.kmChegada || '', chegadaTocadaEm: r.chegadaTocadaEm || '', chegadaCorrigidaEm: r.chegadaCorrigidaEm || '' };
+  /* 6f: e a posição do GPS na saída e na chegada à base. */
+  return { blocos: r.blocos.map(function (b, i) { var x = { t: b.t, ini: b.ini, obra: b.obra || '', motivo: b.motivo || '', obs: b.obs || '', tocadoEm: b.tocadoEm || '', corrigidoEm: b.corrigidoEm || '' }; if (i === 0 && b.gps) x.gps = b.gps; return x; }),
+           chegada: r.chegada || '', kmSaida: r.kmSaida || '', kmChegada: r.kmChegada || '', chegadaTocadaEm: r.chegadaTocadaEm || '', chegadaCorrigidaEm: r.chegadaCorrigidaEm || '',
+           chegadaGps: r.chegadaGps || null };
 }
 function diariosDoDia(dia, prefixo) {
   var p = String(prefixo || '').toUpperCase();
@@ -362,7 +364,8 @@ function tocar(tipo) {
   if (tipo === 'CHEGADA') {
     if (!r.blocos.length) return erro('Registre antes a saída da base ("Saí · deslocando").');
     if (!km) return erro('O km do hodômetro na chegada à base.');
-    r.chegada = hora; r.kmChegada = km; r.chegadaTocadaEm = new Date().toISOString();
+    r.chegada = hora; r.kmChegada = km; r.chegadaTocadaEm = new Date().toISOString(); r.chegadaGps = null;
+    gpsDoToque(r, 'chegada');
   } else {
     if (!r.blocos.length && tipo !== 'DESLOC') return erro('O dia começa com "Saí · deslocando", na saída da base.');
     if (!r.blocos.length && !km) return erro('O km do hodômetro na saída da base.');
@@ -371,14 +374,30 @@ function tocar(tipo) {
     if (tipo === 'PARADA' && motivo === L.motivoOutro && !obs) return erro('Descreva o motivo da parada.');
     if (!r.blocos.length) r.kmSaida = km;
     r.blocos.push({ t: tipo, ini: hora, obra: tipo === 'ALMOCO' ? '' : obra, motivo: tipo === 'PARADA' ? motivo : '', obs: tipo === 'PARADA' ? obs : '', tocadoEm: new Date().toISOString() });
+    if (r.blocos.length === 1) gpsDoToque(r, 0);
   }
   E.aviso = null; E.toque = null; E.valToque = null;
   return guardarDia(r).then(desenhar);
 }
+/*
+ * O GPS NA SAÍDA E NA CHEGADA À BASE (6f; Dalton, 15/10/2026, 18:42: "pode fazer"). Só esses dois toques, uma
+ * leitura cada, como a da foto (a regra 22.3 é não seguir a equipe o dia todo). A leitura não segura o toque:
+ * o registro grava na hora e a posição chega depois (até 8 s), no mesmo registro, se ele ainda existir.
+ * Sem permissão ou sem sinal de GPS, fica "sem GPS", e a conferência mostra assim.
+ */
+function gpsDoToque(r, qual) {
+  var alvo = qual === 'chegada' ? null : r.blocos[qual], quando = new Date().toISOString();
+  return lerPosicao().then(function (pos) {
+    var g = pos ? { lat: pos.lat, lon: pos.lon, precisao: pos.precisao, em: quando } : { semGps: true, em: quando };
+    if (qual === 'chegada') { if (!r.chegada) return; r.chegadaGps = g; }
+    else { if (r.blocos[qual] !== alvo) return; alvo.gps = g; }
+    return guardarDia(r);
+  }).catch(function () { /* sem GPS não é erro: o toque já está gravado */ });
+}
 function desfazerToque() {
   var info = diaAtual(); if (!info || diaTravado(info.dia, info.prefixo)) return;
   var r = diaDaEquipe(info.dia, info.prefixo);
-  if (r.chegada) { r.chegada = ''; r.kmChegada = ''; r.chegadaTocadaEm = ''; r.chegadaCorrigidaEm = ''; }
+  if (r.chegada) { r.chegada = ''; r.kmChegada = ''; r.chegadaTocadaEm = ''; r.chegadaCorrigidaEm = ''; r.chegadaGps = null; }
   else { r.blocos.pop(); if (!r.blocos.length) r.kmSaida = ''; }
   return guardarDia(r).then(desenhar);
 }
@@ -1139,8 +1158,11 @@ function bookDo(d) { d.book = d.book || { estruturas: {}, fotos: {}, extras: [],
    uma das últimas. */
 var TROCADAS_POR_ITEM_DO_BOOK = 3;
 function anteriorDoDiario(d) { var f = folhaDoPacote(pacoteDe(d.dia), d.codigo); return (f && f.book) || { previstas: [], lugares: {}, geral: {} }; }
+/* 6f: a folha de manutenção emergencial tem o book de emergência (o defeito e a rede normalizada, sem a
+   observação por estrutura); a regra vem do servidor, no pacote. */
+function emergenciaDoDiario(d, R) { return !!(R && R.ehEmergenciaApp && R.ehEmergenciaApp(d.form)); }
 function estadoDoBook(d, R) {
-  var e = R.estadoDoBookApp(retratoDoBook(d), anteriorDoDiario(d)), b = bookDo(d), tem = {};
+  var e = R.estadoDoBookApp(retratoDoBook(d), anteriorDoDiario(d), emergenciaDoDiario(d, R)), b = bookDo(d), tem = {};
   e.lugares.forEach(function (l) { tem[l.id] = 1; });
   /* A estrutura acrescentada hoje e ainda sem foto também aparece. */
   b.extras.forEach(function (id) { if (!tem[id]) e.lugares.push({ id: id, prevista: false, eq: /^EQ/.test(id), hoje: false, fotos: 0, fotosHoje: 0, obs: '', itens: {}, fora: !/^EQ/.test(id) && e.previstas > 0, faltas: ['sem foto'], pronta: false }); });
@@ -1161,20 +1183,21 @@ function cartaoDoBook(d, pac, cab) {
   var e = estadoDoBook(d, R), L = pac.listas || {}, geral = L.geral || 'Geral';
   if (!b.sel) b.sel = (e.lugares[0] || {}).id || geral;
   var h = '<div class="cartao secao" id="f-book">' + cab(titulo + (e.previstas ? ' <span class="obrig">' + e.prontas + ' de ' + e.previstas + ' prontas</span>' : '')) +
-    '<div class="ajuda" style="margin-top:-4px">Escolha a estrutura e fotografe cada item. Verde: pronta. Amarela: falta foto ou a observação. Branca: sem foto.' + (e.previstas ? ' Soma os outros dias.' : '') + '</div><div class="lugares">';
+    '<div class="ajuda" style="margin-top:-4px">' + (emergenciaDoDiario(d, R) ? 'No atendimento, fotografe em <b>Geral</b> a APR, a sinalização, o <b>defeito encontrado</b> e a <b>rede normalizada</b>; a estrutura ou o equipamento, se trabalhou neles.' :
+      'Escolha a estrutura e fotografe cada item. Verde: pronta. Amarela: falta foto ou a observação. Branca: sem foto.' + (e.previstas ? ' Soma os outros dias.' : '')) + '</div><div class="lugares">';
   h += e.lugares.map(function (l) {
     var cls = l.pronta ? 'pronta' : (l.fotos || l.obs) ? 'parcial' : '';
     return '<button type="button" class="lugar ' + cls + (b.sel === l.id ? ' sel' : '') + '" data-lugar="' + esc(l.id) + '">' + esc(l.id) + (l.fora ? '*' : '') + '</button>';
   }).join('') + '<button type="button" class="lugar geral' + (b.sel === geral ? ' sel' : '') + '" data-lugar="' + esc(geral) + '">' + esc(geral) + '</button></div>' +
     '<div class="duas"><div><button type="button" class="btn medio fantasma" data-acao="addLugar" data-novo="FP">+ estrutura' + (e.previstas ? ' fora da viabilidade' : '') + '</button></div>' +
     '<div><button type="button" class="btn medio fantasma" data-acao="addLugar" data-novo="EQ">+ equipamento (EQ)</button></div></div>';
-  var sel = b.sel, l = e.lugares.filter(function (y) { return y.id === sel; })[0], etqs = R.etiquetasDoLugarApp(sel, x);
-  h += '<div class="lugarSel"><div class="etiqueta">' + (sel === geral ? 'Geral: segurança e croqui' : 'Estrutura ' + esc(sel) + (l && l.fora ? ' · fora da viabilidade' : '') + (l && l.eq ? ' · equipamento' : '')) + '</div>';
+  var emerg = emergenciaDoDiario(d, R), sel = b.sel, l = e.lugares.filter(function (y) { return y.id === sel; })[0], etqs = R.etiquetasDoLugarApp(sel, x, emerg);
+  h += '<div class="lugarSel"><div class="etiqueta">' + (sel === geral ? (emerg ? 'Geral: segurança, o defeito e a rede normalizada' : 'Geral: segurança e croqui') : 'Estrutura ' + esc(sel) + (l && l.fora ? ' · fora da viabilidade' : '') + (l && l.eq ? ' · equipamento' : '')) + '</div>';
   if (!etqs.length) h += '<div class="aviso atencao">' + (/^EQ/.test(sel) ? 'O ponto EQ é do equipamento: declare na execução (seção 6) o equipamento instalado ou retirado e qual é.' : 'Nada a fotografar aqui.') + '</div>';
   var ant = sel === geral ? (anterior.geral || {}) : ((anterior.lugares || {})[sel] || {}).itens || {};
   etqs.forEach(function (it) {
     var nHoje = it.fotos.filter(function (f) { return b.fotos[sel + '|' + it.id + '|' + f]; }).length, nAnt = it.fotos.filter(function (f) { return (ant[it.id] || []).indexOf(f) >= 0; }).length;
-    var exigida = it.onde === 'dia' && (it.quando === 'sempre' || (it.quando === 'deslig' && x.comDesligamento)) || /^equip/.test(it.quando);
+    var exigida = it.onde === 'dia' && (it.quando === 'sempre' || (it.quando === 'deslig' && x.comDesligamento) || (it.quando === 'emergencia' && emerg)) || /^equip/.test(it.quando);
     var feitos = it.fotos.filter(function (f) { return b.fotos[sel + '|' + it.id + '|' + f] || (ant[it.id] || []).indexOf(f) >= 0; }).length;
     /* "se tiver": a etiqueta da estrutura só é cobrada quando a estrutura tem (uma foto dela já basta para cobrar o resto). */
     var situ = feitos >= it.min ? (nHoje ? feitos + ' de ' + it.fotos.length : 'outro dia') : (!exigida && !feitos ? null : '');
