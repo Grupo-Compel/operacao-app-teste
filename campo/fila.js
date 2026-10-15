@@ -8,7 +8,7 @@
    NADA DE DADO DA COMPEL NESTE ARQUIVO, nem endereço do servidor: tudo isso
    chega no celular (o link do supervisor e o pacote do dia) e fica só nele. */
 
-var VERSAO_APP = '6d · 15/10/2026';
+var VERSAO_APP = '6e · 15/10/2026';
 var BANCO = 'operacao-campo';
 
 function abrirBanco() {
@@ -96,6 +96,10 @@ function postar(url, corpo, ms) {
   var controle = typeof AbortController !== 'undefined' ? new AbortController() : null;
   var relogio = controle ? setTimeout(function () { controle.abort(); }, ms || 90000) : null;
   corpo.app = 'campo'; corpo.versao = VERSAO_APP;
+  /* 6e (15/10/2026): o relógio e o fuso do celular na hora do envio. O servidor compara com o dele: a hora
+     do toque só vale se o relógio do celular estava certo, e o fuso diz que hora local o toque marcou
+     (Dourados é UTC−4; o Rio, UTC−3). */
+  corpo.relogio = new Date().toISOString(); corpo.fuso = new Date().getTimezoneOffset();
   return fetch(url, { method: 'POST', body: JSON.stringify(corpo), redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                       signal: controle ? controle.signal : undefined })
     .then(function (resp) { return resp.text(); })

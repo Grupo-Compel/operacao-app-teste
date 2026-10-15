@@ -257,8 +257,10 @@ function carregarDias() {
 }
 /* O que vai com o diário: só o que as regras olham. */
 function retratoDoDia(r) {
-  return { blocos: r.blocos.map(function (b) { return { t: b.t, ini: b.ini, obra: b.obra || '', motivo: b.motivo || '', obs: b.obs || '', tocadoEm: b.tocadoEm || '' }; }),
-           chegada: r.chegada || '', kmSaida: r.kmSaida || '', kmChegada: r.kmChegada || '' };
+  /* 6e (15/10/2026): vão também o momento do toque da chegada e quando a hora foi corrigida. O Dalton quer
+     comparar a hora informada com a hora em que o botão foi tocado ("se ele está burlando os horários"). */
+  return { blocos: r.blocos.map(function (b) { return { t: b.t, ini: b.ini, obra: b.obra || '', motivo: b.motivo || '', obs: b.obs || '', tocadoEm: b.tocadoEm || '', corrigidoEm: b.corrigidoEm || '' }; }),
+           chegada: r.chegada || '', kmSaida: r.kmSaida || '', kmChegada: r.kmChegada || '', chegadaTocadaEm: r.chegadaTocadaEm || '', chegadaCorrigidaEm: r.chegadaCorrigidaEm || '' };
 }
 function diariosDoDia(dia, prefixo) {
   var p = String(prefixo || '').toUpperCase();
@@ -297,14 +299,29 @@ function obrasDoDia(dia, prefixo) {
   });
   diariosDoDia(dia, prefixo).forEach(function (d) {
     var a = alvoDoDiario(d, R); if (!a || vistos[a]) return; vistos[a] = 1;
-    out.push([a, (d.form.obra ? 'obra ' + d.form.obra : 'folha sem obra') + (d.extra ? ' (sem programação)' : '')]);
+    out.push([a, d.extra ? nomeDoAtendimento(d) : 'obra ' + d.form.obra]);
   });
   return out;
 }
 function rotuloDoAlvo(dia, prefixo, alvo) {
   var o = obrasDoDia(dia, prefixo).filter(function (x) { return x[0] === alvo; })[0];
-  return o ? o[1] : alvo ? (alvo.charAt(0) === '#' ? 'folha sem obra' : 'obra ' + alvo) : '';
+  return o ? o[1] : alvo ? (alvo.charAt(0) === '#' ? 'atendimento sem NR' : 'obra ' + alvo) : '';
 }
+/*
+ * A EMERGÊNCIA NÃO É OBRA (Dalton, 15/10/2026: "no app, quando é uma emergência, vários campos sinalizam a
+ * palavra obra"). A folha sem programação é um atendimento: o número que ela leva é a NR da ocorrência, e
+ * os textos falam em atendimento e local. A folha da programação continua falando em obra. No dia que só
+ * tem atendimento, os toques também; no dia com os dois, "obra ou atendimento".
+ */
+function comNR(n) { return /^NR/i.test(String(n)) ? String(n) : 'NR ' + n; }
+function nomeDoAtendimento(d) { return d.form.tipoDia === 'PLANTAO' ? 'plantão' : d.form.obra ? 'atendimento ' + comNR(d.form.obra) : 'atendimento sem NR'; }
+function oQueTemNoDia(dia, prefixo) {
+  var pac = pacoteDe(dia), p = String(prefixo || '').toUpperCase();
+  var obra = ((pac && pac.folhas) || []).some(function (f) { return String(f.p).toUpperCase() === p && f.obra; });
+  var atend = diariosDoDia(dia, p).some(function (d) { return d.extra; });
+  return { obra: obra || !atend, atend: atend };
+}
+function palavraDoAlvo(dia, prefixo) { var q = oQueTemNoDia(dia, prefixo); return q.obra && q.atend ? 'obra ou atendimento' : q.atend ? 'atendimento' : 'obra'; }
 
 /* Os horários do dia nos campos do diário (expediente, almoço, km e as atividades da obra dele). */
 function aplicarDia(d) {
@@ -361,7 +378,7 @@ function tocar(tipo) {
 function desfazerToque() {
   var info = diaAtual(); if (!info || diaTravado(info.dia, info.prefixo)) return;
   var r = diaDaEquipe(info.dia, info.prefixo);
-  if (r.chegada) { r.chegada = ''; r.kmChegada = ''; }
+  if (r.chegada) { r.chegada = ''; r.kmChegada = ''; r.chegadaTocadaEm = ''; r.chegadaCorrigidaEm = ''; }
   else { r.blocos.pop(); if (!r.blocos.length) r.kmSaida = ''; }
   return guardarDia(r).then(desenhar);
 }
@@ -377,7 +394,7 @@ function corrigirHora(i, valor) {
     E.aviso = { tipo: 'erro', texto: 'A hora tem de ficar entre ' + (antes ? antes.ini : 'o começo do dia') + ' e ' + (depois ? depois.ini : 'o fim do dia') + '.' };
     return desenhar();
   }
-  if (i === 'chegada') r.chegada = valor; else { r.blocos[i].ini = valor; r.blocos[i].corrigidoEm = new Date().toISOString(); }
+  if (i === 'chegada') { r.chegada = valor; r.chegadaCorrigidaEm = new Date().toISOString(); } else { r.blocos[i].ini = valor; r.blocos[i].corrigidoEm = new Date().toISOString(); }
   E.aviso = null;
   return guardarDia(r).then(desenhar);
 }
@@ -424,7 +441,9 @@ var PROXIMOS_REGISTROS = {
 function nomeDoToque(tipo, ult, r) {
   var u = ult ? ult.t : '';
   if (tipo === 'DESLOC') return r.blocos.length ? 'Saí · deslocando' : 'Saí da base · deslocando';
-  if (tipo === 'SERVICO') return u === 'DESLOC' ? 'Cheguei na obra · iniciei o serviço' : u === 'SERVICO' ? 'Serviço em outra obra' : u ? 'Voltei ao serviço' : 'Iniciei o serviço';
+  var q = oQueTemNoDia(r.dia, r.prefixo), soAtend = q.atend && !q.obra;
+  if (tipo === 'SERVICO') return u === 'DESLOC' ? (soAtend ? 'Cheguei ao local · iniciei o atendimento' : q.atend ? 'Cheguei · iniciei o serviço' : 'Cheguei na obra · iniciei o serviço') :
+    u === 'SERVICO' ? (soAtend ? 'Outro atendimento' : q.atend ? 'Serviço em outra obra ou atendimento' : 'Serviço em outra obra') : u ? 'Voltei ao serviço' : 'Iniciei o serviço';
   if (tipo === 'PARADA') return u === 'PARADA' ? 'Outra parada' : 'Parada';
   if (tipo === 'ALMOCO') return 'Almoço';
   return 'Cheguei à base';
@@ -455,7 +474,7 @@ function formularioDoToque(t, info, r, L, R, ult) {
   if (t === 'DESLOC' && !r.blocos.length) h += '<label for="tqKm">Km do hodômetro na saída da base</label><input id="tqKm" inputmode="numeric" maxlength="7" autocomplete="off" value="' + esc(v.km || '') + '">';
   if (t === 'CHEGADA') h += '<label for="tqKm">Km do hodômetro na chegada à base</label><input id="tqKm" inputmode="numeric" maxlength="7" autocomplete="off" value="' + esc(v.km || '') + '"><div class="ajuda">Na saída, o hodômetro marcava <b>' + esc(r.kmSaida) + '</b>.</div>';
   if (t === 'SERVICO' || t === 'DESLOC' || t === 'PARADA') {
-    if (obras.length) h += '<label for="tqObra">' + (t === 'DESLOC' ? 'Indo para qual obra' : 'Em qual obra') + '</label><select id="tqObra">' +
+    if (obras.length) h += '<label for="tqObra">' + (t === 'DESLOC' ? 'Indo para qual ' : 'Em qual ') + esc(palavraDoAlvo(info.dia, info.prefixo)) + '</label><select id="tqObra">' +
       (t === 'DESLOC' ? '<option value=""' + (v.obra === '' ? ' selected' : '') + '>Para a base, ou outro lugar</option>' : '') + opcoes(obras, v.obra !== undefined ? v.obra : obraPadrao) + '</select>';
     else if (t === 'SERVICO') h += '<div class="aviso atencao">Nenhuma folha aberta para esta equipe no dia. Abra a folha na aba Hoje: <b>Obra</b> ou <b>Emergência</b>.<button type="button" class="btn medio secundario" data-aba-ir="hoje">Ir para Hoje</button></div>';
   }
@@ -852,7 +871,7 @@ function cartoesDeEmergencia(dia, extras) {
     '<button type="button" class="btn" data-acao="extra">Abrir uma folha de atendimento emergencial</button>' +
     '<div class="ajuda">Uma folha por atendimento. Serve também para o plantão sem acionamento e o homem-hora (à disposição do cliente).</div></div>';
   extras.forEach(function (d) {
-    h += '<div class="cartao folha"><div class="linha1"><b>' + esc(d.form.prefixo || 'Sem equipe') + '</b> · ' + (d.form.obra ? 'obra <b>' + esc(d.form.obra) + '</b>' : d.form.tipoDia === 'PLANTAO' ? 'plantão' : 'sem número de obra') +
+    h += '<div class="cartao folha"><div class="linha1"><b>' + esc(d.form.prefixo || 'Sem equipe') + '</b> · ' + (d.form.obra ? '<b>' + esc(comNR(d.form.obra)) + '</b>' : d.form.tipoDia === 'PLANTAO' ? 'plantão' : 'sem NR') +
       ' <span class="chip ' + d.estado + '">' + esc(NOME_DO_ESTADO[d.estado]) + '</span></div><div class="fraco">Folha sem programação' + (d.form.municipio ? ' · ' + esc(d.form.municipio) : '') + '</div>' +
       '<button type="button" class="btn medio secundario" data-abrir-diario="' + esc(d.id) + '">' + (d.estado === 'rascunho' ? 'Continuar o diário' : 'Ver o diário') + '</button></div>';
   });
@@ -902,6 +921,21 @@ function campoHora(campo, rotulo, x, dica) {
   return '<div id="f-' + campo + '"><label for="i-' + campo + '">' + esc(rotulo) + '</label><div class="hora"><input id="i-' + campo + '" type="time" data-f="' + campo + '" value="' + esc(x[campo]) + '">' +
     '<button type="button" class="btn fantasma" data-agora="' + campo + '">agora</button></div>' + (dica ? '<div class="ajuda">' + dica + '</div>' : '') + '</div>';
 }
+/*
+ * A PLACA SÓ ENTRE AS DA BASE (6e, 15/10/2026; Dalton: "apareça apenas as placas de lá"). A lista vem no
+ * pacote, da planilha de frota. "Outra placa" abre o campo de digitar (carro emprestado de outra base; a
+ * conferência avisa). Pacote sem a lista (frota não ligada, ou pacote antigo): o campo de digitar de antes.
+ */
+var OUTRA_PLACA = '__OUTRA__';
+function campoDaPlaca(x, pac) {
+  var placas = (pac && pac.placas) || [], digitar = campoTexto('placa', 'Placa da viatura', x, ' maxlength="8" style="text-transform:uppercase"');
+  if (!placas.length) return digitar;
+  var v = String(x.placa || '').toUpperCase().replace(/[\s-]+/g, ''), fora = x.placaOutra || (v && !placas.some(function (p) { return p.placa === v; }));
+  return '<div id="f-placaSel"><label for="i-placaSel">Placa da viatura</label><select id="i-placaSel" data-placa="1"><option value="">Escolha a placa</option>' +
+    placas.map(function (p) { return '<option value="' + esc(p.placa) + '"' + (!fora && p.placa === v ? ' selected' : '') + '>' + esc(p.placa) + (p.tipo ? ' · ' + esc(p.tipo) : '') + (p.parado ? ' (parado)' : '') + '</option>'; }).join('') +
+    '<option value="' + OUTRA_PLACA + '"' + (fora ? ' selected' : '') + '>Outra placa (de outra base)</option></select></div>' +
+    (fora ? campoTexto('placa', 'Qual placa', x, ' maxlength="8" style="text-transform:uppercase" placeholder="ABC1D23"') : '<div id="f-placa"></div>');
+}
 function campoTexto(campo, rotulo, x, extra, dica) {
   return '<div id="f-' + campo + '"><label for="i-' + campo + '">' + esc(rotulo) + '</label><input id="i-' + campo + '" data-f="' + campo + '" value="' + esc(x[campo]) + '" autocomplete="off"' + (extra || '') + '>' + (dica ? '<div class="ajuda">' + dica + '</div>' : '') + '</div>';
 }
@@ -947,11 +981,11 @@ function telaDiario() {
      sobre branco não se via onde uma parte acabava e a outra começava). */
   var n = 0, cab = function (t) { return '<div class="etiqueta"><span class="n">' + (++n) + '</span>' + t + '</div>'; };
   /* 1. a folha */
-  h += '<div class="cartao secao">' + cab(f ? 'Folha da obra ' + esc(f.obra || '—') : 'Folha de emergência (sem programação)') + '<div class="fraco" style="margin-bottom:4px">' + (f ? esc(f.codigo) + ' · ' : '') + esc(brDe(d.dia)) + '</div>' +
+  h += '<div class="cartao secao">' + cab(f ? 'Folha da obra ' + esc(f.obra || '—') : 'Folha de atendimento emergencial (sem programação)') + '<div class="fraco" style="margin-bottom:4px">' + (f ? esc(f.codigo) + ' · ' : '') + esc(brDe(d.dia)) + '</div>' +
     '<div><b>' + esc(quem().nome) + '</b> <span class="fraco">· encarregado' + (ehSubstituto(d.dia) ? ' substituto' : '') + ' · ' + esc(quem().mat) + '</span></div>' +
     '<div id="f-prefixo">' + (f ? '<div class="media">Equipe <b>' + esc(x.prefixo) + '</b></div>' :
       '<label for="i-prefixo">Equipe (prefixo)</label><select id="i-prefixo" data-f="prefixo" data-redesenha="1">' + opcoes((pac.equipes || []).map(function (e) { return [e.p, e.p + (e.t ? ' · ' + e.t : '')]; }), x.prefixo, 'Escolha a equipe') + '</select>') + '</div>' +
-    campoTexto('placa', 'Placa da viatura', x, ' maxlength="8" style="text-transform:uppercase"') +
+    campoDaPlaca(x, pac) +
     '<div id="f-tipoDia"><label>Como foi o dia</label>' + seg('tipo', [['PRODUCAO', 'Produção'], ['PLANTAO', 'Plantão'], ['HH', 'Homem-hora']], x.tipoDia) +
     '<div class="ajuda">' + esc(plantao ? 'Plantão sem acionamento: a equipe ficou de prontidão e não foi acionada.' : hh ? 'À disposição do cliente: grava as horas do expediente, sem o almoço.' : 'Produção: os serviços do verso do PS.') + '</div></div></div>';
 
@@ -959,7 +993,7 @@ function telaDiario() {
   h += '<div class="cartao secao">' + cab('Horários desta folha') + '<dl class="resumo">' +
     '<dt>Expediente</dt><dd>' + esc(x.expIni && x.expFim ? x.expIni + ' às ' + x.expFim : '—') + '</dd>' +
     '<dt>Almoço</dt><dd>' + esc(x.almIni ? x.almIni + ' às ' + x.almFim : 'sem almoço') + '</dd>' +
-    (prod ? '<dt>Atividades</dt><dd>' + esc(x.ini ? x.ini + ' às ' + x.fim : '— (falta "Iniciei o serviço" nesta obra)') + '</dd>' : '') +
+    (prod ? '<dt>Atividades</dt><dd>' + esc(x.ini ? x.ini + ' às ' + x.fim : '— (falta "Iniciei o serviço" ' + (f ? 'nesta obra' : 'neste atendimento') + ')') + '</dd>' : '') +
     '<dt>Km</dt><dd>' + esc(x.kmSaida ? x.kmSaida + (x.kmChegada ? ' → ' + x.kmChegada : '') : '—') + '</dd></dl>' +
     '<div class="ajuda">Saem do dia em horários, lá em cima: para mudar, corrija os registros do dia.</div></div>';
 
@@ -982,8 +1016,8 @@ function telaDiario() {
 
   /* 5. a obra */
   if (!plantao) {
-    h += '<div class="cartao secao">' + cab('A obra') +
-      (f ? '<div id="f-obra" class="media">Documento (projeto / NR): <b>' + esc(x.obra || '—') + '</b></div>' : campoTexto('obra', 'Documento (projeto / NR)' + (hh ? ' — opcional no homem-hora' : ''), x, ' style="text-transform:uppercase"')) +
+    h += '<div class="cartao secao">' + cab(f ? 'A obra' : 'O atendimento') +
+      (f ? '<div id="f-obra" class="media">Documento (projeto / NR): <b>' + esc(x.obra || '—') + '</b></div>' : campoTexto('obra', 'Número da NR (a ocorrência da Energisa)' + (hh ? ' — opcional no homem-hora' : ''), x, ' style="text-transform:uppercase"')) +
       campoTexto('municipio', 'Município', x, ' style="text-transform:uppercase"') +
       '<div class="duas"><div>' + campoTexto('alim', 'Alimentador', x, ' maxlength="8" style="text-transform:uppercase"') + '</div><div>' + campoTexto('ponto', 'Ponto elétrico', x, ' maxlength="16" style="text-transform:uppercase"') + '</div></div>' +
       '<div class="duas"><div id="f-atividade"><label for="i-atividade">Atividade</label><select id="i-atividade" data-f="atividade">' + opcoes(L.atividades || [], x.atividade) + '</select></div>' +
@@ -1054,8 +1088,8 @@ function cartaoDaExecucao(d, pac, cab) {
     return '<details class="bloco" data-bloco="' + esc(k) + '"' + (E.fechados[k] ? '' : ' open') + '><summary><span>' + titulo + '</span>' +
       '<span class="sit ' + (situacao ? 'ok' : 'falta') + '">' + (situacao ? '✓ ' + esc(situacao) : 'falta') + '</span></summary><div class="dentro">' + corpo + '</div></details>';
   };
-  var h = '<div class="cartao secao" id="f-execucao">' + cab('A execução da obra');
-  h += '<div id="f-pendencia">' + bloco('pendencia', 'Ficou pendência na obra?', x.pendencia === 'Não' ? 'não' : x.pendencia === 'Sim' && String(x.pendenciaDesc || '').trim() ? 'sim' : '',
+  var h = '<div class="cartao secao" id="f-execucao">' + cab(d.folha ? 'A execução da obra' : 'A execução do atendimento');
+  h += '<div id="f-pendencia">' + bloco('pendencia', d.folha ? 'Ficou pendência na obra?' : 'Ficou pendência no local?', x.pendencia === 'Não' ? 'não' : x.pendencia === 'Sim' && String(x.pendenciaDesc || '').trim() ? 'sim' : '',
     sx('pendencia', ['Sim', 'Não']) + (x.pendencia === 'Sim' ? '<textarea data-x="pendenciaDesc" maxlength="300" placeholder="O que ficou pendente" style="margin-top:6px">' + esc(x.pendenciaDesc) + '</textarea>' : '')) + '</div>';
   if (x.comDesligamento) {
     var r = diaDaEquipe(d.dia, d.form.prefixo), espera = 0;
@@ -1122,10 +1156,11 @@ function proximoLugar(e, tipo, anterior) {
 }
 function cartaoDoBook(d, pac, cab) {
   var R = regrasDe(pac), x = d.form.execucao || {}, b = bookDo(d), anterior = anteriorDoDiario(d);
-  if (!R || !R.estadoDoBookApp) return '<div class="cartao secao" id="f-book">' + cab('Book da obra') + '<div class="aviso">O book no celular chega quando o sistema for atualizado. Por enquanto, as fotos do book seguem como hoje.</div></div>';
+  var titulo = d.folha ? 'Book da obra' : 'Book do atendimento';
+  if (!R || !R.estadoDoBookApp) return '<div class="cartao secao" id="f-book">' + cab(titulo) + '<div class="aviso">O book no celular chega quando o sistema for atualizado. Por enquanto, as fotos do book seguem como hoje.</div></div>';
   var e = estadoDoBook(d, R), L = pac.listas || {}, geral = L.geral || 'Geral';
   if (!b.sel) b.sel = (e.lugares[0] || {}).id || geral;
-  var h = '<div class="cartao secao" id="f-book">' + cab('Book da obra' + (e.previstas ? ' <span class="obrig">' + e.prontas + ' de ' + e.previstas + ' prontas</span>' : '')) +
+  var h = '<div class="cartao secao" id="f-book">' + cab(titulo + (e.previstas ? ' <span class="obrig">' + e.prontas + ' de ' + e.previstas + ' prontas</span>' : '')) +
     '<div class="ajuda" style="margin-top:-4px">Escolha a estrutura e fotografe cada item. Verde: pronta. Amarela: falta foto ou a observação. Branca: sem foto.' + (e.previstas ? ' Soma os outros dias.' : '') + '</div><div class="lugares">';
   h += e.lugares.map(function (l) {
     var cls = l.pronta ? 'pronta' : (l.fotos || l.obs) ? 'parcial' : '';
@@ -1204,7 +1239,7 @@ function trocarFotoDoBook(d, chave, arquivo) {
   var tirada = new Date();
   lerPosicao().then(function (pos) {
     var linhas = [tirada.toLocaleString('pt-BR') + (pos ? '   ·   ' + utmDe(pos.lat, pos.lon) : ''),
-      ['Obra ' + (d.form.obra || '—'), lugar === 'Geral' ? 'GERAL' : lugar.replace(/^(FP|EQ)(\d)/, '$1 $2')].join('   ·   '),
+      [d.folha ? 'Obra ' + (d.form.obra || '—') : comNR(d.form.obra || '—'), lugar === 'Geral' ? 'GERAL' : lugar.replace(/^(FP|EQ)(\d)/, '$1 $2')].join('   ·   '),
       etq + ' · ' + item, [d.form.prefixo, 'Enc. ' + quem().nome].filter(Boolean).join('   ·   ')];
     return processarFoto(arquivo, LADOS_FOTO_PS, TETO_FOTO_PS, linhas).then(function (r) {
       var id = novoId(), antiga = b.fotos[chave], sobra = null;
@@ -1251,7 +1286,7 @@ function itensDaBusca(pac, termo, verso) {
 
 // ---- Encerrar (OPE-16)
 /* O nome curto de uma folha nas listas. */
-function nomeDaFolha(d) { return d.form.tipoDia === 'PLANTAO' ? 'plantão' : d.form.obra ? 'obra ' + d.form.obra : 'folha sem obra'; }
+function nomeDaFolha(d) { return d.extra ? nomeDoAtendimento(d) : d.form.tipoDia === 'PLANTAO' ? 'plantão' : 'obra ' + (d.form.obra || '—'); }
 
 /*
  * ENCERRA-SE O DIA, E NÃO A FOLHA (5b): os horários das folhas saem do mesmo
@@ -1496,6 +1531,11 @@ corpo.addEventListener('change', function (ev) {
   if (t.hasAttribute('data-bl')) { corrigirHora(+t.getAttribute('data-bl'), t.value); return; }
   if (t.hasAttribute('data-chegada')) { corrigirHora('chegada', t.value); return; }
   if (t.id === 'tqEquipe') { E.equipe = t.value; desenhar(); return; }
+  if (t.hasAttribute('data-placa') && d && d.estado === 'rascunho') {
+    if (t.value === OUTRA_PLACA) { d.form.placa = ''; d.form.placaOutra = true; } else { d.form.placa = t.value; d.form.placaOutra = false; }
+    salvarAgora().then(desenhar).then(function () { var i = $('i-placa'); if (d.form.placaOutra && i) i.focus(); });
+    return;
+  }
   if (t.getAttribute('data-foto') && d && d.estado === 'rascunho') { trocarFotoDoPS(d, t.getAttribute('data-foto'), t.files && t.files[0]); return; }
   if (t.getAttribute('data-book') && d && d.estado === 'rascunho') { trocarFotoDoBook(d, t.getAttribute('data-book'), t.files && t.files[0]); return; }
   if (t.getAttribute('data-redesenha') && d && d.estado === 'rascunho') {
