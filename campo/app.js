@@ -39,7 +39,8 @@ var E = {
   pessoa: null,         // quem entrou no celular da equipe (5d): { mat, nome, funcoes, prefixos, sessao, valeAte }
   pessoas: {},          // as pessoas que já entraram neste celular: mat -> { nome, funcoes, prefixos, sessao, valeAte, verif, erros }
   entrar: { modo: 'entrar' },  // a tela de entrar (5d)
-  substitutos: {}       // 'dia|mat': a pessoa disse que é o encarregado da equipe hoje (5d)
+  substitutos: {},      // 'dia|mat': a pessoa disse que é o encarregado da equipe hoje (5d)
+  docs: {}              // 2f: id do projeto -> 'ok' | 'baixando' | 'erro:motivo' (o PDF guardado no celular)
 };
 var REGRAS = {};        // geradoEm do pacote -> as funções de regra do servidor | { erro }
 
@@ -151,7 +152,7 @@ function baixarPacote(dia, quieto) {
   E.baixando = true; if (!quieto) desenhar();
   return postar(E.cfg.url, { acao: 'pacote', token: E.cfg.token, dia: dia }, 60000).then(function (r) {
     E.baixando = false;
-    if (r.ok) { E.pacotes[dia] = r; E.aviso = null; return gravarConfig('pacote:' + dia, r); }
+    if (r.ok) { E.pacotes[dia] = r; E.aviso = null; return gravarConfig('pacote:' + dia, r).then(function () { baixarProjetos(r); }); }
     if (r.desligado) return marcarDesligado(r.erro);
     if (!quieto) E.aviso = { tipo: 'erro', texto: r.erro || 'O servidor não mandou o pacote.' };
   }, function (e) {
@@ -825,6 +826,128 @@ function cartaoDaFuncao(dia) {
 }
 
 // ---- Hoje (OPE-14)
+// ---------------------------------------------------------------- 2f: o projeto da obra no celular
+/*
+ * O PROJETO DA OBRA, PARA VER SEM SINAL (2f, 16/10/2026; Dalton, 15/10: "o projeto no celular"). O pacote do dia
+ * diz qual é o projeto de cada obra das folhas; depois do pacote, o app pede cada PDF ao servidor, um de cada vez,
+ * e guarda no banco do celular. Na obra, "Ver o projeto" abre do que está guardado, com o leitor de PDF que vem
+ * junto com o app (pdfjs/, a mesma versão 3.11.174 da tela do sistema), e não da internet.
+ */
+var LEITOR_PDF_APP = './pdfjs/pdf.min.js', TRABALHADOR_PDF_APP = './pdfjs/pdf.worker.min.js';
+/* O desenho é grande (folha A1): no zoom alto, o canvas passaria do que o celular aguenta. 6000 px de largura é o teto. */
+var LARGURA_MAXIMA_DO_PROJETO_PX = 6000;
+
+function projetoDaObra(pac, obra) { return pac && pac.projetos && obra ? pac.projetos[obra] || null : null; }
+function projetosDosPacotes() {
+  var ids = {};
+  Object.keys(E.pacotes).forEach(function (dia) { var pr = (E.pacotes[dia] || {}).projetos || {}; Object.keys(pr).forEach(function (o) { ids[pr[o].id] = pr[o]; }); });
+  return ids;
+}
+/* Ao abrir o app: quais projetos já estão guardados; e os que nenhum pacote cita mais saem do celular. */
+function conferirProjetosGuardados() {
+  var ids = projetosDosPacotes();
+  return lerConfig('projetos').then(function (lista) {
+    lista = lista || [];
+    var fica = lista.filter(function (id) { return ids[id]; }), sai = lista.filter(function (id) { return !ids[id]; });
+    fica.forEach(function (id) { E.docs[id] = 'ok'; });
+    return Promise.all(sai.map(function (id) { return gravarConfig('doc:' + id, null); })).then(function () { return sai.length ? gravarConfig('projetos', fica) : null; });
+  }).catch(function () { /* sem a lista, o app só baixa de novo */ });
+}
+function baixarProjetos(pac, avisarErro) {
+  if (!pac || !pac.projetos || !E.cfg || E.cfg.desligado || E.baixandoProjetos) return Promise.resolve();
+  var falta = Object.keys(pac.projetos).map(function (o) { return pac.projetos[o]; }).filter(function (p) { return E.docs[p.id] !== 'ok'; });
+  if (!falta.length) return Promise.resolve();
+  E.baixandoProjetos = true;
+  var um = function (k) {
+    if (k >= falta.length) { E.baixandoProjetos = false; desenhar(); return Promise.resolve(); }
+    var p = falta[k];
+    E.docs[p.id] = 'baixando'; desenhar();
+    return postar(E.cfg.url, { acao: 'documento', token: E.cfg.token, id: p.id }, 120000).then(function (r) {
+      if (!r || !r.ok || !r.dados) { E.docs[p.id] = 'erro:' + ((r && r.erro) || 'o servidor não mandou o projeto'); return; }
+      return gravarConfig('doc:' + p.id, { id: p.id, obra: r.obra, nome: r.nome, kb: r.kb, dados: r.dados, em: new Date().toISOString() })
+        .then(function () { return lerConfig('projetos'); })
+        .then(function (l) { l = l || []; if (l.indexOf(p.id) < 0) l.push(p.id); E.docs[p.id] = 'ok'; return gravarConfig('projetos', l); });
+    }, function (e) { E.docs[p.id] = 'erro:' + (avisarErro ? 'não consegui baixar (' + (e && e.msg || 'sem sinal') + ')' : 'ainda não baixado (sem sinal)'); })
+      .then(function () { return um(k + 1); });
+  };
+  return um(0);
+}
+function botaoDoProjeto(pac, obra) {
+  var p = projetoDaObra(pac, obra);
+  if (!p) return '';
+  var st = E.docs[p.id];
+  if (st === 'ok') return '<button type="button" class="btn medio secundario projeto" data-projeto="' + esc(p.id) + '">Ver o projeto</button>';
+  if (st === 'baixando') return '<div class="ajuda projeto">Baixando o projeto da obra (' + esc(p.kb) + ' KB)…</div>';
+  return '<div class="ajuda projeto">' + esc(st && st.indexOf('erro:') === 0 ? 'Projeto: ' + st.slice(5) : 'O projeto da obra ainda não está no celular') + '. ' +
+    '<button type="button" class="link" data-baixar-projeto="' + esc(p.id) + '">Baixar agora</button></div>';
+}
+
+function carregarLeitorPdfApp() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  return new Promise(function (ok, falha) {
+    var sc = document.createElement('script');
+    sc.src = LEITOR_PDF_APP;
+    sc.onload = function () { if (!window.pdfjsLib) return falha(new Error('o leitor de PDF não abriu')); window.pdfjsLib.GlobalWorkerOptions.workerSrc = TRABALHADOR_PDF_APP; ok(window.pdfjsLib); };
+    sc.onerror = function () { falha(new Error('o leitor de PDF não está guardado no celular: abra o app uma vez com sinal')); };
+    document.head.appendChild(sc);
+  });
+}
+var visor = null;   // { doc, bytes, zoom, pdf, url, erro }
+function abrirProjeto(id) {
+  return lerConfig('doc:' + id).then(function (doc) {
+    if (!doc) { delete E.docs[id]; return desenhar(); }
+    var bin = atob(doc.dados), u8 = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    visor = { doc: doc, bytes: u8, zoom: 1, pdf: null, erro: '', url: URL.createObjectURL(new Blob([u8], { type: 'application/pdf' })) };
+    desenharVisor();
+    return carregarLeitorPdfApp().then(function (lib) { return lib.getDocument({ data: u8.slice() }).promise; }).then(function (pdf) {
+      if (!visor || visor.doc.id !== id) return;
+      visor.pdf = pdf; return renderizarVisor();
+    }).catch(function (e) { if (visor) { visor.erro = e && e.message || String(e); desenharVisor(); } });
+  });
+}
+function desenharVisor() {
+  var el = $('visorProjeto');
+  if (!visor) { if (el) el.parentNode.removeChild(el); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'visorProjeto'; el.setAttribute('role', 'dialog'); document.body.appendChild(el); el.addEventListener('click', cliqueNoVisor); }
+  var V = visor;
+  el.innerHTML = '<div class="visor-barra"><b>' + esc(V.doc.nome || 'Projeto') + '</b>' +
+    '<button type="button" data-visor="menos" aria-label="Diminuir">−</button><span class="visor-zoom">' + Math.round(V.zoom * 100) + '%</span><button type="button" data-visor="mais" aria-label="Aumentar">+</button>' +
+    '<button type="button" data-visor="fechar">Fechar</button></div>' +
+    '<div class="visor-paginas" id="visorPaginas">' + (V.erro ? '<div class="aviso erro">Não consegui abrir o projeto aqui: ' + esc(V.erro) + '.</div>' : V.pdf ? '' : '<div class="ajuda">Abrindo o projeto…</div>') + '</div>' +
+    '<div class="visor-pe"><a href="' + V.url + '" download="' + esc((V.doc.nome || 'projeto').replace(/\.pdf$/i, '') + '.pdf') + '">Abrir em outro app de PDF</a> <span class="fraco">· guardado no celular, abre sem sinal</span></div>';
+}
+function renderizarVisor() {
+  var V = visor;
+  if (!V || !V.pdf) return Promise.resolve();
+  desenharVisor();
+  var caixa = $('visorPaginas'), largura = Math.max(200, (caixa.clientWidth || window.innerWidth) - 8), dpr = window.devicePixelRatio || 1;
+  var cadeia = Promise.resolve();
+  for (var n = 1; n <= V.pdf.numPages; n++) (function (k) {
+    cadeia = cadeia.then(function () { return V.pdf.getPage(k); }).then(function (pg) {
+      if (visor !== V) return;
+      var v1 = pg.getViewport({ scale: 1 }), esc1 = largura * V.zoom / v1.width;
+      var px = Math.min(LARGURA_MAXIMA_DO_PROJETO_PX, Math.floor(v1.width * esc1 * dpr));
+      var vp = pg.getViewport({ scale: px / v1.width });
+      var cv = document.createElement('canvas');
+      cv.width = Math.floor(vp.width); cv.height = Math.floor(vp.height);
+      cv.style.width = Math.floor(vp.width / dpr) + 'px'; cv.style.height = Math.floor(vp.height / dpr) + 'px';
+      cv.setAttribute('data-pagina', k);
+      caixa.appendChild(cv);
+      return pg.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+    });
+  })(n);
+  return cadeia.catch(function (e) { V.erro = e && e.message || String(e); desenharVisor(); });
+}
+function cliqueNoVisor(ev) {
+  var b = ev.target.closest ? ev.target.closest('[data-visor]') : null;
+  if (!b || !visor) return;
+  var o = b.getAttribute('data-visor');
+  if (o === 'fechar') { URL.revokeObjectURL(visor.url); visor = null; return desenharVisor(); }
+  visor.zoom = Math.max(0.5, Math.min(4, visor.zoom * (o === 'mais' ? 1.5 : 1 / 1.5)));
+  renderizarVisor();
+}
+
 function telaHoje() {
   var dia = E.dia, pac = pacoteDe(dia), hoje = hojeLocal();
   var h = '<div class="cartao"><div class="etiqueta">' + (E.cfg.login ? 'Celular da equipe ' + esc(E.cfg.prefixo) : 'Encarregado') + '</div><b>' + esc(quem().nome) + '</b> <span class="fraco">· ' + esc(quem().mat) + ' · ' + esc(pac && pac.base ? pac.base.nome : E.cfg.base) + '</span>' +
@@ -877,7 +1000,7 @@ function cartoesDeObra(dia, pac, folhas) {
       '<div class="linha1"><b>' + esc(f.p) + '</b> · obra <b>' + esc(f.obra || '—') + '</b> ' + chip + '</div>' +
       '<div class="media">' + esc(f.municipio || '') + '</div>' +
       (f.servico ? '<div class="fraco">' + esc(String(f.servico).slice(0, 140)) + '</div>' : '') +
-      '<div class="fraco">Folha ' + esc(f.codigo) + '</div>' +
+      '<div class="fraco">Folha ' + esc(f.codigo) + '</div>' + botaoDoProjeto(pac, f.obra) +
       (ja && !d ? '<div class="ajuda">Lançada em ' + esc(ja.quando) + ' por ' + esc(ja.por || '?') + '.</div>' :
         '<button type="button" class="btn medio' + (d ? ' secundario' : '') + '" data-abrir-folha="' + esc(f.codigo) + '">' + (d ? (d.estado === 'rascunho' ? 'Continuar o diário' : 'Ver o diário') : 'Começar o diário') + '</button>') + '</div>';
   });
@@ -1002,6 +1125,7 @@ function telaDiario() {
   /* 1. a folha */
   h += '<div class="cartao secao">' + cab(f ? 'Folha da obra ' + esc(f.obra || '—') : 'Folha de atendimento emergencial (sem programação)') + '<div class="fraco" style="margin-bottom:4px">' + (f ? esc(f.codigo) + ' · ' : '') + esc(brDe(d.dia)) + '</div>' +
     '<div><b>' + esc(quem().nome) + '</b> <span class="fraco">· encarregado' + (ehSubstituto(d.dia) ? ' substituto' : '') + ' · ' + esc(quem().mat) + '</span></div>' +
+    (f ? botaoDoProjeto(pac, f.obra) : '') +
     '<div id="f-prefixo">' + (f ? '<div class="media">Equipe <b>' + esc(x.prefixo) + '</b></div>' :
       '<label for="i-prefixo">Equipe (prefixo)</label><select id="i-prefixo" data-f="prefixo" data-redesenha="1">' + opcoes((pac.equipes || []).map(function (e) { return [e.p, e.p + (e.t ? ' · ' + e.t : '')]; }), x.prefixo, 'Escolha a equipe') + '</select>') + '</div>' +
     campoDaPlaca(x, pac) +
@@ -1604,6 +1728,8 @@ corpo.addEventListener('click', function (ev) {
   if (a('data-dia')) { E.dia = a('data-dia'); E.aviso = null; desenhar(); if (!pacoteDe(E.dia) && navigator.onLine) baixarPacote(E.dia); return; }
   if (a('data-modo')) { E.modoHoje[E.dia] = a('data-modo'); return desenhar(); }
   if (a('data-abrir-folha')) return abrirFolha(a('data-abrir-folha'));
+  if (a('data-projeto')) return abrirProjeto(a('data-projeto'));
+  if (a('data-baixar-projeto')) return baixarProjetos(pacoteDe(E.dia), true);
   if (a('data-abrir-diario')) return abrirDiario(a('data-abrir-diario'));
   if (a('data-aba-ir')) return irPara(a('data-aba-ir'));
   if (t.hasAttribute('data-ir')) return irAtePendencia(a('data-ir'), a('data-diario'));
@@ -1735,7 +1861,7 @@ lerConfig('servidor').then(function (c) {
   return recarregarDiarios();
 }).then(function () {
   return Promise.all([carregarPacotesGuardados(), carregarDias(), lerConfig('aberto').then(function (id) { E.aberto = id ? E.diarios.filter(function (d) { return d.id === id; })[0] || null : null; })]);
-}).then(limparVelhos).then(function () {
+}).then(limparVelhos).then(conferirProjetosGuardados).then(function () {
   desenhar();
   if (!E.cfg || E.ligar) return;
   /* Ao abrir: o pedido de envio em segundo plano é refeito (o Android pode ter

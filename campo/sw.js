@@ -9,8 +9,10 @@
    POST respondido do cache seria um "enviado" que não chegou. */
 importScripts('fila.js');
 
-var VERSAO_CACHE = 'operacao-campo-6f-1';
-var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './manifest.webmanifest', './icone-192.png', './icone-512.png'];
+var VERSAO_CACHE = 'operacao-campo-2f-1';
+/* 2f: o leitor de PDF (pdfjs/) vem guardado, para o projeto abrir na obra sem sinal. */
+var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './manifest.webmanifest', './icone-192.png', './icone-512.png',
+  './pdfjs/pdf.min.js', './pdfjs/pdf.worker.min.js'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(VERSAO_CACHE).then(function (c) { return c.addAll(ARQUIVOS); }).then(function () { return self.skipWaiting(); }));

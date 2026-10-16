@@ -128,6 +128,18 @@
   .sit.vazio { background:#EEF0F3; color:var(--tinta-media); }
   button.link { background:none; border:0; color:var(--azul); text-decoration:underline; padding:4px 0; font-size:13px; cursor:pointer; display:inline; }
   footer { text-align:center; color:var(--tinta-fraca); font-size:12px; padding:6px 0 4px; }
+/* 2f: o projeto da obra, aberto do que está guardado no celular. */
+#visorProjeto { position: fixed; inset: 0; z-index: 50; background: #2B2729; display: flex; flex-direction: column; }
+#visorProjeto .visor-barra { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: #1C191B; color: #fff; }
+#visorProjeto .visor-barra b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+#visorProjeto .visor-barra button { background: #fff; color: #1C191B; border: 0; border-radius: 6px; min-width: 40px; height: 36px; font-size: 15px; font-weight: 700; padding: 0 10px; }
+#visorProjeto .visor-zoom { color: #fff; font-size: 13px; min-width: 44px; text-align: center; }
+#visorProjeto .visor-paginas { flex: 1; overflow: auto; padding: 4px; -webkit-overflow-scrolling: touch; }
+#visorProjeto .visor-paginas canvas { display: block; background: #fff; margin: 0 0 6px; }
+#visorProjeto .visor-paginas .aviso, #visorProjeto .visor-paginas .ajuda { color: #fff; }
+#visorProjeto .visor-pe { padding: 8px 10px; background: #1C191B; color: #ddd; font-size: 13px; }
+#visorProjeto .visor-pe a { color: #fff; font-weight: 700; }
+.projeto { margin-top: 6px; }
 </style>
 </head>
 <body>
