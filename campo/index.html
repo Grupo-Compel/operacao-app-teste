@@ -128,6 +128,18 @@
   .sit.vazio { background:#EEF0F3; color:var(--tinta-media); }
   button.link { background:none; border:0; color:var(--azul); text-decoration:underline; padding:4px 0; font-size:13px; cursor:pointer; display:inline; }
   footer { text-align:center; color:var(--tinta-fraca); font-size:12px; padding:6px 0 4px; }
+/* 5e: a APR da folha. */
+.apr-bloco { border-top: 1px solid var(--linha); margin-top: 10px; padding-top: 8px; }
+.apr-titulo { font-weight: 700; font-size: 13.5px; margin: 4px 0 6px; }
+.apr-q { display: grid; grid-template-columns: 1fr; gap: 4px; padding: 6px 0; border-bottom: 1px dashed var(--linha); font-size: 14px; }
+.apr-sn { max-width: 260px; }
+.apr-item { margin: 8px 0; }
+.apr-marca { display: block; width: 100%; text-align: left; background: #fff; border: 1.5px solid var(--linha); border-radius: 8px; padding: 8px 10px; font-weight: 700; font-size: 14px; min-height: var(--toque); }
+.apr-marca.ativo { border-color: var(--tinta-media); }
+.apr-marcas { display: flex; flex-wrap: wrap; gap: 6px; }
+.apr-marcas button { background: #fff; border: 1.5px solid var(--linha); border-radius: 18px; padding: 6px 10px; font-size: 13.5px; min-height: 36px; }
+.apr-marcas button.ativo { border-color: var(--tinta-media); font-weight: 700; }
+.apr-imp { background: #FFF7E0; padding: 8px; border-radius: 8px; border: 0; }
 /* 2f: o projeto da obra, aberto do que está guardado no celular. */
 #visorProjeto { position: fixed; inset: 0; z-index: 50; background: #2B2729; display: flex; flex-direction: column; }
 #visorProjeto .visor-barra { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: #1C191B; color: #fff; }

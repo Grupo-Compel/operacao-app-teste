@@ -87,9 +87,12 @@ function regrasDe(pac) {
   var k = pac.geradoEm + '|' + pac.dia;
   if (!REGRAS[k]) {
     /* As da 5b e as da 5c só existem no pacote do servidor da 5b e da 5c: o pacote antigo abre, e o app pede para baixar de novo. */
-    var opc = ['validarDiaDoApp', 'horariosDoDiaApp', 'alvoDoDiarioApp', 'faixaDaEsperaCOD', 'validarBookDoApp', 'estadoDoBookApp', 'etiquetasDoLugarApp', 'casaEquipamentoApp', 'ehEmergenciaApp'];
+    var opc = ['validarDiaDoApp', 'horariosDoDiaApp', 'alvoDoDiarioApp', 'faixaDaEsperaCOD', 'validarBookDoApp', 'estadoDoBookApp', 'etiquetasDoLugarApp', 'casaEquipamentoApp', 'ehEmergenciaApp',
+      /* 5e: a APR (e o catálogo dos modelos, que é dado e não função) */
+      'modelosDaAprApp', 'modeloSugeridoDaAprApp', 'estadoDaAprApp', 'validarAprDoApp'];
     try { REGRAS[k] = new Function(pac.regras + '\nreturn { validarLancamentoPS: validarLancamentoPS, chaveDoLancamentoPS: chaveDoLancamentoPS,' +
-      opc.map(function (n) { return ' ' + n + ': typeof ' + n + ' === "function" ? ' + n + ' : null'; }).join(',') + ' };')(); }
+      opc.map(function (n) { return ' ' + n + ': typeof ' + n + ' === "function" ? ' + n + ' : null'; }).join(',') +
+      ', MODELOS_APR: typeof MODELOS_APR === "object" ? MODELOS_APR : null };')(); }
     catch (e) { REGRAS[k] = { erro: 'As regras do pacote não abriram neste celular (' + e.message + '). Baixe o pacote de novo.' }; }
   }
   return REGRAS[k];
@@ -498,6 +501,12 @@ function formularioDoToque(t, info, r, L, R, ult) {
       (t === 'DESLOC' ? '<option value=""' + (v.obra === '' ? ' selected' : '') + '>Para a base, ou outro lugar</option>' : '') + opcoes(obras, v.obra !== undefined ? v.obra : obraPadrao) + '</select>';
     else if (t === 'SERVICO') h += '<div class="aviso atencao">Nenhuma folha aberta para esta equipe no dia. Abra a folha na aba Hoje: <b>Obra</b> ou <b>Emergência</b>.<button type="button" class="btn medio secundario" data-aba-ir="hoje">Ir para Hoje</button></div>';
   }
+  /* 5e: "Iniciei o serviço" sem a APR da folha concluída: aviso, e não bloqueio (o toque é a hora que aconteceu; a
+     conferência mostra a APR feita depois do início). */
+  if (t === 'SERVICO' && ((pacoteDe(info.dia) || {}).listas || {}).aprPadrao) {
+    var semApr = E.diarios.filter(function (d) { return d.dia === info.dia && d.estado === 'rascunho' && d.form.tipoDia === 'PRODUCAO' && String(d.form.prefixo || '').toUpperCase() === String(info.prefixo || '').toUpperCase() && !(d.apr && d.apr.feitaEm); });
+    if (semApr.length) h += '<div class="aviso atencao" id="avisoSemApr">A APR ainda não foi concluída em: ' + esc(semApr.map(nomeDaFolha).join(', ')) + '. A APR é feita <b>antes</b> de começar o serviço (aba Diário).</div>';
+  }
   if (t === 'PARADA') h += '<label for="tqMotivo">Motivo da parada</label><select id="tqMotivo">' + opcoes(L.paradas || [], v.motivo || '', 'Escolha') + '</select>' +
     '<input id="tqObs" placeholder="Descreva (obrigatório se for &quot;Outro&quot;)" autocomplete="off" style="margin-top:6px" value="' + esc(v.obs || '') + '">';
   return h + '<div class="duas"><div><button type="button" class="btn medio fantasma" data-acao="cancelarToque">Cancelar</button></div>' +
@@ -596,6 +605,8 @@ function conferirDiario(d) {
      o servidor não conhece, senão o encarregado não conseguiria encerrar (14/10/2026: o app no GitHub vai
      na frente da instalação). */
   if (R.validarBookDoApp) R.validarBookDoApp(retratoDoBook(d), p, anteriorDoDiario(d)).forEach(junta);
+  /* 5e: a APR, com a regra do servidor (o servidor de antes da 5e não manda: o app não cobra). */
+  if (R.validarAprDoApp) R.validarAprDoApp(d.apr || null, p, (pac.listas || {}).aprPadrao || '').forEach(junta);
   val.erros.forEach(function (e) { if (CAMPOS_DO_DIA.indexOf(e.campo) < 0 || !out.erros.some(function (x) { return x.doDia; })) junta(e); });
   var x = d.form;
   var semMarcar = x.pessoas.filter(function (q) { return q.estado !== 'foi' && q.estado !== 'faltou'; });
@@ -1132,6 +1143,9 @@ function telaDiario() {
     '<div id="f-tipoDia"><label>Como foi o dia</label>' + seg('tipo', [['PRODUCAO', 'Produção'], ['PLANTAO', 'Plantão'], ['HH', 'Homem-hora']], x.tipoDia) +
     '<div class="ajuda">' + esc(plantao ? 'Plantão sem acionamento: a equipe ficou de prontidão e não foi acionada.' : hh ? 'À disposição do cliente: grava as horas do expediente, sem o almoço.' : 'Produção: os serviços do verso do PS.') + '</div></div></div>';
 
+  /* 1b. a APR (5e): antes de começar o serviço, uma por folha. */
+  if (prod && (L.aprPadrao || '')) h += cartaoDaApr(d, pac, cab);
+
   /* 2. os horários, que saem do dia */
   h += '<div class="cartao secao">' + cab('Horários desta folha') + '<dl class="resumo">' +
     '<dt>Expediente</dt><dd>' + esc(x.expIni && x.expFim ? x.expIni + ' às ' + x.expFim : '—') + '</dd>' +
@@ -1212,6 +1226,90 @@ function telaDiario() {
         '<input type="file" accept="image/*" capture="environment" data-foto="' + l + '"></label>';
     }).join('') + '</div><div id="estadoFoto" class="ajuda"></div></div>';
   h += '<button type="button" class="btn" data-aba-ir="encerrar">Conferir e encerrar o dia</button>';
+  return h;
+}
+
+// ---------------------------------------------------------------- 5e: a APR da folha
+/*
+ * A APR NO CELULAR (5e, 16/10/2026; Dalton, 16/10, 19:16): uma por folha (uma obra ou um atendimento, num lugar),
+ * antes de começar o serviço, e o papel continua (a foto dele vai no book, em Geral). O modelo vem da base (MS: o de
+ * Mato Grosso do Sul; MT e RO: o da atividade, que o encarregado pode trocar). As perguntas e a regra vêm no pacote
+ * (MODELOS_APR e estadoDaAprApp, 36_APR.gs): o celular confere sem sinal, como o servidor.
+ */
+function aprDo(d) {
+  if (!d.apr) {
+    var pac = pacoteDe(d.dia), R = regrasDe(pac), L = (pac && pac.listas) || {}, eq = ((pac && pac.equipes) || []).filter(function (e) { return e.p === d.form.prefixo; })[0];
+    d.apr = { modelo: R && R.modeloSugeridoDaAprApp ? R.modeloSugeridoDaAprApp(L.aprPadrao || '', d.form.atividade, eq && eq.t) : '', descricao: '', cod: '',
+              respostas: {}, marcados: {}, impedimento: {}, motivo: {}, riscos: [], epis: [], obs: '' };
+  }
+  ['respostas', 'marcados', 'impedimento', 'motivo'].forEach(function (k) { d.apr[k] = d.apr[k] || {}; });
+  return d.apr;
+}
+function concluirApr(d) {
+  var pac = pacoteDe(d.dia), R = regrasDe(pac), e = R && R.estadoDaAprApp ? R.estadoDaAprApp(aprDo(d), (pac.listas || {}).aprPadrao || '', 'inicio') : null;
+  if (!e) return;
+  if (!e.pronta) { E.aviso = { tipo: 'erro', texto: 'APR: falta ' + e.faltas.join('; ') + '.' }; return desenhar(); }
+  if (!d.apr.feitaEm) d.apr.feitaEm = new Date().toISOString();
+  E.aviso = e.impedidos.length ? { tipo: 'erro', texto: 'APR concluída COM IMPEDIMENTO: não comece a atividade. Fale com o supervisor.' } : { tipo: 'ok', texto: 'APR concluída às ' + horaAgora() + '. Pode começar o serviço.' };
+  return salvarAgora().then(desenhar);
+}
+function cartaoDaApr(d, pac, cab) {
+  var R = regrasDe(pac), L = pac.listas || {}, padrao = L.aprPadrao || '';
+  if (!R || !R.estadoDaAprApp || !R.modelosDaAprApp) return '';
+  var a = aprDo(d), modelos = R.modelosDaAprApp(padrao), M = (R.MODELOS_APR || {})[a.modelo];
+  var est = R.estadoDaAprApp(a, padrao, 'inicio'), estFim = R.estadoDaAprApp(a, padrao, 'fim');
+  var sn = function (chave, valores) {
+    return '<div class="seg apr-sn">' + valores.map(function (v) { return '<button type="button" data-apr-r="' + chave + '" data-v="' + v[0] + '" class="' + (a.respostas[chave] === v[0] ? 'ativo' : '') + '">' + v[1] + '</button>'; }).join('') + '</div>';
+  };
+  var SNNA = [['S', 'Sim'], ['N', 'Não'], ['NA', 'N/A']], SN = [['S', 'Sim'], ['N', 'Não']];
+  var pessoas = [quem().nome + ' (encarregado)'].concat(d.form.pessoas.filter(function (p) { return p.estado === 'foi'; }).map(function (p) { return p.nome || p.mat; }));
+  var h = '<div class="cartao secao" id="f-apr">' + cab('APR · antes de começar o serviço ' + (a.feitaEm ? '<span class="sit ok">✓ concluída às ' + esc(horaDeIso(a.feitaEm).slice(-5)) + '</span>' : '<span class="obrig">obrigatória</span>')) +
+    (modelos.length > 1 ? '<label for="i-aprModelo">Modelo</label><select id="i-aprModelo" data-apr-modelo="1">' + opcoes(modelos.map(function (m) { return [m, (R.MODELOS_APR[m] || {}).nome || m]; }), a.modelo) + '</select>'
+      : '<div class="media">' + esc(M ? M.nome : '') + '</div>') +
+    '<div class="ajuda">Uma APR por obra e local. O papel continua: fotografe a APR em papel no book (Geral). Supervisor da atividade: <b>' + esc(quem().nome) + '</b>.</div>' +
+    '<div class="ajuda">Participantes: ' + esc(pessoas.join(', ')) + ' (os que foram, em Componentes).</div>' +
+    '<label for="i-aprDescricao">Descrição do trabalho</label><input id="i-aprDescricao" data-apr="descricao" value="' + esc(a.descricao) + '" maxlength="300" autocomplete="off">' +
+    (M && M.tipo === 'SNNA' ? '<label for="i-aprCod">Operador do COD</label><input id="i-aprCod" data-apr="cod" value="' + esc(a.cod) + '" maxlength="80" autocomplete="off">' : '');
+  if (!M) return h + '<div class="aviso atencao">Escolha o modelo da APR.</div></div>';
+  if (M.tipo === 'SNNA') {
+    M.blocos.forEach(function (b) {
+      h += '<div class="apr-bloco"><div class="apr-titulo">' + esc(b.titulo) + (b.noFim ? ' <span class="fraco">(responda antes de encerrar)</span>' : '') + '</div>' +
+        b.perguntas.map(function (q, i) { return '<div class="apr-q"><div>' + esc(q) + '</div>' + sn(b.id + '.' + i, SNNA) + '</div>'; }).join('') + '</div>';
+      if (b.id === 'energ') {
+        var marca = function (lista, nome, outro) {
+          return '<div class="apr-marcas">' + lista.map(function (r, i) { var on = (a[nome] || []).indexOf(i) >= 0; return '<button type="button" class="' + (on ? 'ativo' : '') + '" data-apr-lista="' + nome + '" data-i="' + i + '">' + (on ? '☑ ' : '☐ ') + esc(r) + '</button>'; }).join('') + '</div>' +
+            ((a[nome] || []).indexOf(lista.length - 1) >= 0 ? '<input data-apr="' + outro + '" value="' + esc(a[outro] || '') + '" placeholder="Qual?" maxlength="120">' : '');
+        };
+        h += '<div class="apr-bloco"><div class="apr-titulo">Quais os riscos identificados?</div>' + marca(M.riscos, 'riscos', 'riscoOutro') + '</div>' +
+          '<div class="apr-bloco"><div class="apr-titulo">Quais os EPIs necessários?</div>' + marca(M.epis, 'epis', 'epiOutro') + '</div>' +
+          '<div class="apr-bloco"><div class="apr-q"><div>' + esc(M.adicionais) + '</div>' + sn('adicionais', SNNA) + '</div>' +
+          (a.respostas.adicionais === 'S' ? '<input data-apr="adicionaisQuais" value="' + esc(a.adicionaisQuais || '') + '" placeholder="Quais?" maxlength="300">' : '') + '</div>';
+      }
+      if (b.id === 'termino') h += '<div class="apr-bloco"><div class="apr-q"><div>' + esc(M.reavaliacao) + '</div>' + sn('reavaliacao', SNNA) + '</div></div>';
+    });
+  } else {
+    M.grupos.forEach(function (g) {
+      var ativo = g.obrigatorio || !!a.marcados['g' + g.n], imp = a.impedimento['g' + g.n];
+      var corpoG = (g.obrigatorio ? '' : '<button type="button" class="btn medio ' + (ativo ? '' : 'secundario') + '" data-apr-m="g' + g.n + '">' + (ativo ? '☑ Este risco existe na atividade' : '☐ Este risco existe na atividade?') + '</button>');
+      if (ativo) {
+        g.itens.forEach(function (it, k) {
+          var vale = !it.marcavel || !!a.marcados['g' + g.n + '.' + k];
+          corpoG += '<div class="apr-item">' + (it.marcavel ? '<button type="button" class="apr-marca' + (vale ? ' ativo' : '') + '" data-apr-m="g' + g.n + '.' + k + '">' + (vale ? '☑ ' : '☐ ') + esc(it.nome) + '</button>' : '<div class="apr-titulo">' + esc(it.nome) + '</div>') +
+            (vale ? it.medidas.map(function (q, j) { return '<div class="apr-q"><div>' + esc(q) + '</div>' + sn('g' + g.n + '.' + k + '.' + j, SN) + '</div>'; }).join('') : '') + '</div>';
+        });
+        if (g.impedimento) corpoG += '<div class="apr-q apr-imp"><div><b>Existe algum impedimento para executar a atividade?</b></div><div class="seg apr-sn">' + SN.map(function (v) {
+            return '<button type="button" data-apr-imp="g' + g.n + '" data-v="' + v[0] + '" class="' + (imp === v[0] ? 'ativo' : '') + '">' + v[1] + '</button>'; }).join('') + '</div>' +
+          (imp === 'S' ? '<input data-apr-mot="g' + g.n + '" value="' + esc(a.motivo['g' + g.n] || '') + '" placeholder="O motivo do impedimento (obrigatório)" maxlength="500">' : '') + '</div>';
+      }
+      var faltaG = est.faltas.filter(function (f) { return f.indexOf(g.n + ' · ') === 0; }).length;
+      h += blocoDoDiario(d, 'apr-g' + g.n, g.n + ' · ' + esc(g.risco) + (g.obrigatorio ? '' : ' <span class="fraco">(se tiver)</span>'), !ativo ? null : faltaG ? '' : (imp === 'S' ? 'impedimento' : 'ok'), corpoG);
+    });
+  }
+  h += '<label for="i-aprObs">Observações</label><textarea id="i-aprObs" data-apr="obs" maxlength="500">' + esc(a.obs || '') + '</textarea>';
+  if (est.impedidos.length) h += '<div class="aviso erro">IMPEDIMENTO: ' + esc(est.impedidos.map(function (x) { return x.grupo; }).join('; ')) + '. Não comece a atividade: fale com o supervisor.</div>';
+  h += (est.faltas.length ? '<div class="ajuda">Falta: ' + esc(est.faltas.join('; ')) + '.</div>' : '') +
+    (a.feitaEm ? (estFim.faltas.length && !est.faltas.length ? '<div class="ajuda">Antes de encerrar: ' + esc(estFim.faltas.join('; ')) + '.</div>' : '')
+      : '<button type="button" class="btn" data-acao="concluirApr">Concluir a APR</button>') + '</div>';
   return h;
 }
 
@@ -1662,6 +1760,10 @@ corpo.addEventListener('input', function (ev) {
     salvarDepois();
   } else if (xf) {
     garantirExecucao(d); d.form.execucao[xf] = t.value; salvarDepois();
+  } else if (t.hasAttribute('data-apr')) {
+    aprDo(d)[t.getAttribute('data-apr')] = t.value; salvarDepois();
+  } else if (t.hasAttribute('data-apr-mot')) {
+    aprDo(d).motivo[t.getAttribute('data-apr-mot')] = t.value; salvarDepois();
   } else if (t.hasAttribute('data-bkobs')) {
     var bo = bookDo(d), lg = t.getAttribute('data-bkobs');
     bo.estruturas[lg] = bo.estruturas[lg] || {}; bo.estruturas[lg].obs = t.value; salvarDepois();
@@ -1685,6 +1787,13 @@ corpo.addEventListener('change', function (ev) {
   }
   if (t.getAttribute('data-foto') && d && d.estado === 'rascunho') { trocarFotoDoPS(d, t.getAttribute('data-foto'), t.files && t.files[0]); return; }
   if (t.getAttribute('data-book') && d && d.estado === 'rascunho') { trocarFotoDoBook(d, t.getAttribute('data-book'), t.files && t.files[0]); return; }
+  if (t.hasAttribute('data-apr-modelo') && d && d.estado === 'rascunho') {
+    /* Trocar o modelo começa a APR de novo: as respostas de um modelo não valem no outro. */
+    var mv = t.value, av = aprDo(d);
+    if (mv !== av.modelo) d.apr = { modelo: mv, descricao: av.descricao, cod: av.cod, respostas: {}, marcados: {}, impedimento: {}, motivo: {}, riscos: [], epis: [], obs: av.obs };
+    salvarAgora().then(desenhar);
+    return;
+  }
   if (t.getAttribute('data-redesenha') && d && d.estado === 'rascunho') {
     if (t.hasAttribute('data-x')) { garantirExecucao(d); d.form.execucao[t.getAttribute('data-x')] = t.value; }
     else d.form[t.getAttribute('data-f')] = t.value;
@@ -1744,6 +1853,11 @@ corpo.addEventListener('click', function (ev) {
     if (a('data-tirar-cod')) { x.codigos.splice(+a('data-tirar-cod'), 1); if (!x.codigos.length) x.codigos.push({ cod: '', qtd: '', adc: '' }); return salvarAgora().then(desenhar); }
     if (a('data-xs')) { garantirExecucao(d); x.execucao[a('data-xs')] = a('data-v'); return salvarAgora().then(desenhar); }
     if (a('data-lugar')) { bookDo(d).sel = a('data-lugar'); return salvarAgora().then(desenhar); }
+    /* 5e: a APR */
+    if (a('data-apr-r')) { var ar = aprDo(d); ar.respostas[a('data-apr-r')] = a('data-v'); return salvarAgora().then(desenhar); }
+    if (a('data-apr-m')) { var am = aprDo(d), km = a('data-apr-m'); if (am.marcados[km]) delete am.marcados[km]; else am.marcados[km] = true; return salvarAgora().then(desenhar); }
+    if (a('data-apr-imp')) { var ai = aprDo(d); ai.impedimento[a('data-apr-imp')] = a('data-v'); return salvarAgora().then(desenhar); }
+    if (a('data-apr-lista')) { var al = aprDo(d), nl = a('data-apr-lista'), il = +a('data-i'), ls = al[nl] = al[nl] || [], pl = ls.indexOf(il); if (pl >= 0) ls.splice(pl, 1); else ls.push(il); return salvarAgora().then(desenhar); }
     if (a('data-verso-cod')) {
       var vazio = x.codigos.filter(function (c) { return !c.cod && !c.qtd; })[0];
       if (vazio) vazio.cod = a('data-verso-cod'); else x.codigos.push({ cod: a('data-verso-cod'), qtd: '', adc: '' });
@@ -1780,6 +1894,7 @@ corpo.addEventListener('click', function (ev) {
       bb.extras.push(novo); bb.sel = novo; return salvarAgora().then(desenhar);
     }
     if (acao === 'tirarFotoBook') return tirarFotoDoBook(d, a('data-chave'));
+    if (acao === 'concluirApr') return concluirApr(d);
     if (acao === 'addCod') { y.codigos.push({ cod: '', qtd: '', adc: '' }); return salvarAgora().then(desenhar); }
     if (acao === 'codCancelado') { var L = pacoteDe(d.dia).listas; y.codigos = [{ cod: L.cancelado, qtd: '1', adc: '' }]; return salvarAgora().then(desenhar); }
     if (acao === 'addPessoa') {
