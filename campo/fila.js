@@ -8,7 +8,7 @@
    NADA DE DADO DA COMPEL NESTE ARQUIVO, nem endereço do servidor: tudo isso
    chega no celular (o link do supervisor e o pacote do dia) e fica só nele. */
 
-var VERSAO_APP = '5e · 16/10/2026';
+var VERSAO_APP = '5e.1 · 17/10/2026';
 var BANCO = 'operacao-campo';
 
 function abrirBanco() {
@@ -164,7 +164,7 @@ function enviarDentroDaTrava(enviadoPor) {
           return postar(cfg.url, { acao: 'lancamento', token: cfg.token, sessao: ss, pacote: p, rosto: d.arquivos.ROSTO, criadoEm: d.encerradoEm, enviadoPor: enviadoPor, tentativas: d.tentativas,
                                    dia: d.diaEnviado || null, book: { estruturas: rb.estruturas, fotos: rb.fotos.map(function (f) { return f.id; }) },
                                    /* 5e: a APR da folha (só na produção; a do plantão e do homem-hora não vai). */
-                                   apr: d.form.tipoDia === 'PRODUCAO' ? d.apr || null : null });
+                                   apr: d.apr || null });
         }).then(function (r) {
           d.resposta = r; d.ultimoErro = '';
           if (r.ok) { d.estado = 'enviado'; d.enviadoEm = new Date().toISOString(); d.enviadoPor = enviadoPor; resumo.enviados++; }

@@ -9,7 +9,7 @@
    POST respondido do cache seria um "enviado" que não chegou. */
 importScripts('fila.js');
 
-var VERSAO_CACHE = 'operacao-campo-5e-1';
+var VERSAO_CACHE = 'operacao-campo-5e-2';
 /* 2f: o leitor de PDF (pdfjs/) vem guardado, para o projeto abrir na obra sem sinal. */
 var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './manifest.webmanifest', './icone-192.png', './icone-512.png',
   './pdfjs/pdf.min.js', './pdfjs/pdf.worker.min.js'];

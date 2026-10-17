@@ -504,7 +504,7 @@ function formularioDoToque(t, info, r, L, R, ult) {
   /* 5e: "Iniciei o serviço" sem a APR da folha concluída: aviso, e não bloqueio (o toque é a hora que aconteceu; a
      conferência mostra a APR feita depois do início). */
   if (t === 'SERVICO' && ((pacoteDe(info.dia) || {}).listas || {}).aprPadrao) {
-    var semApr = E.diarios.filter(function (d) { return d.dia === info.dia && d.estado === 'rascunho' && d.form.tipoDia === 'PRODUCAO' && String(d.form.prefixo || '').toUpperCase() === String(info.prefixo || '').toUpperCase() && !(d.apr && d.apr.feitaEm); });
+    var semApr = E.diarios.filter(function (d) { return d.dia === info.dia && d.estado === 'rascunho' && String(d.form.prefixo || '').toUpperCase() === String(info.prefixo || '').toUpperCase() && !(d.apr && d.apr.feitaEm); });
     if (semApr.length) h += '<div class="aviso atencao" id="avisoSemApr">A APR ainda não foi concluída em: ' + esc(semApr.map(nomeDaFolha).join(', ')) + '. A APR é feita <b>antes</b> de começar o serviço (aba Diário).</div>';
   }
   if (t === 'PARADA') h += '<label for="tqMotivo">Motivo da parada</label><select id="tqMotivo">' + opcoes(L.paradas || [], v.motivo || '', 'Escolha') + '</select>' +
@@ -1143,8 +1143,9 @@ function telaDiario() {
     '<div id="f-tipoDia"><label>Como foi o dia</label>' + seg('tipo', [['PRODUCAO', 'Produção'], ['PLANTAO', 'Plantão'], ['HH', 'Homem-hora']], x.tipoDia) +
     '<div class="ajuda">' + esc(plantao ? 'Plantão sem acionamento: a equipe ficou de prontidão e não foi acionada.' : hh ? 'À disposição do cliente: grava as horas do expediente, sem o almoço.' : 'Produção: os serviços do verso do PS.') + '</div></div></div>';
 
-  /* 1b. a APR (5e): antes de começar o serviço, uma por folha. */
-  if (prod && (L.aprPadrao || '')) h += cartaoDaApr(d, pac, cab);
+  /* 1b. a APR (5e): antes de começar o serviço, uma por folha, em todo tipo de dia (Dalton, 17/10/2026: "toda
+     atividade possui APR"; na 5e era só a produção). A base sem APR no sistema não manda o padrão. */
+  if (x.tipoDia && (L.aprPadrao || '')) h += cartaoDaApr(d, pac, cab);
 
   /* 2. os horários, que saem do dia */
   h += '<div class="cartao secao">' + cab('Horários desta folha') + '<dl class="resumo">' +
@@ -1263,7 +1264,7 @@ function cartaoDaApr(d, pac, cab) {
   };
   var SNNA = [['S', 'Sim'], ['N', 'Não'], ['NA', 'N/A']], SN = [['S', 'Sim'], ['N', 'Não']];
   var pessoas = [quem().nome + ' (encarregado)'].concat(d.form.pessoas.filter(function (p) { return p.estado === 'foi'; }).map(function (p) { return p.nome || p.mat; }));
-  var h = '<div class="cartao secao" id="f-apr">' + cab('APR · antes de começar o serviço ' + (a.feitaEm ? '<span class="sit ok">✓ concluída às ' + esc(horaDeIso(a.feitaEm).slice(-5)) + '</span>' : '<span class="obrig">obrigatória</span>')) +
+  var h = '<div class="cartao secao" id="f-apr">' + cab('APR · antes de começar a atividade ' + (a.feitaEm ? '<span class="sit ok">✓ concluída às ' + esc(horaDeIso(a.feitaEm).slice(-5)) + '</span>' : '<span class="obrig">obrigatória</span>')) +
     (modelos.length > 1 ? '<label for="i-aprModelo">Modelo</label><select id="i-aprModelo" data-apr-modelo="1">' + opcoes(modelos.map(function (m) { return [m, (R.MODELOS_APR[m] || {}).nome || m]; }), a.modelo) + '</select>'
       : '<div class="media">' + esc(M ? M.nome : '') + '</div>') +
     '<div class="ajuda">Uma APR por obra e local. O papel continua: fotografe a APR em papel no book (Geral). Supervisor da atividade: <b>' + esc(quem().nome) + '</b>.</div>' +
