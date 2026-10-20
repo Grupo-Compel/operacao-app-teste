@@ -1301,6 +1301,26 @@ function aprDo(d) {
   ['respostas', 'marcados', 'impedimento', 'motivo'].forEach(function (k) { d.apr[k] = d.apr[k] || {}; });
   return d.apr;
 }
+/*
+ * 5g: A NOVA APR NA MESMA FOLHA (Dalton, 19/10/2026, resposta 7.3: "um botão para gerar nova APR, mesmo na mesma
+ * obra"). A atividade mudou, ou o local, ou o serviço parou e recomeça: a APR que estava vai para a lista das anteriores
+ * da folha (d.aprs), e uma nova começa, com o mesmo modelo. Só com a atual concluída e completa até o término: a
+ * atividade dela acabou, e o que é do fim (término, reavaliação) é dela. Com a trava da APR (5f), o "Iniciei o
+ * serviço" seguinte espera a nova.
+ */
+function aprsAnteriores(d) { return d.aprs || []; }
+function novaApr(d) {
+  var pac = pacoteDe(d.dia), R = regrasDe(pac), L = (pac && pac.listas) || {}, a = aprDo(d);
+  var e = R && R.estadoDaAprApp ? R.estadoDaAprApp(a, L.aprPadrao || '', 'fim') : null;
+  if (!a.feitaEm || !e || !e.pronta) {
+    E.aviso = { tipo: 'erro', texto: 'Nova APR: antes, conclua esta' + (e && e.faltas.length ? ' (falta ' + e.faltas.join('; ') + ')' : '') + '.' };
+    return desenhar();
+  }
+  d.aprs = aprsAnteriores(d).concat([a]);
+  d.apr = { modelo: a.modelo, descricao: '', cod: '', respostas: {}, marcados: {}, impedimento: {}, motivo: {}, riscos: [], epis: [], obs: '' };
+  E.aviso = { tipo: 'ok', texto: 'APR ' + d.aprs.length + ' guardada. Faça a APR ' + (d.aprs.length + 1) + ' antes de começar a nova atividade.' };
+  return salvarAgora().then(desenhar);
+}
 function concluirApr(d) {
   var pac = pacoteDe(d.dia), R = regrasDe(pac), e = R && R.estadoDaAprApp ? R.estadoDaAprApp(aprDo(d), (pac.listas || {}).aprPadrao || '', 'inicio') : null;
   if (!e) return;
@@ -1321,8 +1341,12 @@ function cartaoDaApr(d, pac, cab) {
   var pessoas = [quem().nome + ' (encarregado)'].concat(d.form.pessoas.filter(function (p) { return p.estado === 'foi'; }).map(function (p) { return p.nome || p.mat; }));
   /* 5f (7.6): a folha cancelada antes de "Iniciei o serviço" não pede a APR; ela continua aberta para quem quiser fazer. */
   var pedida = !R.aprPedidaNaFolhaCancelada || R.aprPedidaNaFolhaCancelada({ tipoDia: d.form.tipoDia, status: d.form.status, obra: d.form.obra, id: d.id }, retratoDoDia(diaDaEquipe(d.dia, d.form.prefixo)));
-  var h = '<div class="cartao secao" id="f-apr">' + cab('APR · antes de começar a atividade ' + (a.feitaEm ? '<span class="sit ok">✓ concluída às ' + esc(horaDeIso(a.feitaEm).slice(-5)) + '</span>' : pedida ? '<span class="obrig">obrigatória</span>' : '<span class="sit vazio">não pedida</span>')) +
+  var ant = aprsAnteriores(d), num = ant.length ? ' ' + (ant.length + 1) : '';
+  var h = '<div class="cartao secao" id="f-apr">' + cab('APR' + num + ' · antes de começar a atividade ' + (a.feitaEm ? '<span class="sit ok">✓ concluída às ' + esc(horaDeIso(a.feitaEm).slice(-5)) + '</span>' : pedida ? '<span class="obrig">obrigatória</span>' : '<span class="sit vazio">não pedida</span>')) +
     (pedida ? '' : '<div class="aviso" id="aprNaoPedida">A folha foi cancelada antes de "Iniciei o serviço" (no deslocamento): a APR não é pedida para encerrar.</div>') +
+    /* 5g: as APRs anteriores desta folha, só para ver. */
+    (ant.length ? '<div class="ajuda" id="aprsAnteriores">' + ant.map(function (x, i) {
+      return 'APR ' + (i + 1) + ': concluída às ' + esc(horaDeIso(x.feitaEm).slice(-5)) + (x.descricao ? ' · ' + esc(x.descricao) : ''); }).join('<br>') + '</div>' : '') +
     (modelos.length > 1 ? '<label for="i-aprModelo">Modelo</label><select id="i-aprModelo" data-apr-modelo="1">' + opcoes(modelos.map(function (m) { return [m, (R.MODELOS_APR[m] || {}).nome || m]; }), a.modelo) + '</select>'
       : '<div class="media">' + esc(M ? M.nome : '') + '</div>') +
     '<div class="ajuda">Uma APR por obra e local. O papel continua: fotografe a APR em papel no book (Geral). Supervisor da atividade: <b>' + esc(quem().nome) + '</b>.</div>' +
@@ -1367,7 +1391,8 @@ function cartaoDaApr(d, pac, cab) {
   h += '<label for="i-aprObs">Observações</label><textarea id="i-aprObs" data-apr="obs" maxlength="500">' + esc(a.obs || '') + '</textarea>';
   if (est.impedidos.length) h += '<div class="aviso erro">IMPEDIMENTO: ' + esc(est.impedidos.map(function (x) { return x.grupo; }).join('; ')) + '. Não comece a atividade: fale com o supervisor.</div>';
   h += (est.faltas.length ? '<div class="ajuda">Falta: ' + esc(est.faltas.join('; ')) + '.</div>' : '') +
-    (a.feitaEm ? (estFim.faltas.length && !est.faltas.length ? '<div class="ajuda">Antes de encerrar: ' + esc(estFim.faltas.join('; ')) + '.</div>' : '')
+    (a.feitaEm ? (estFim.faltas.length && !est.faltas.length ? '<div class="ajuda">Antes de encerrar: ' + esc(estFim.faltas.join('; ')) + '.</div>' : '') +
+      '<button type="button" class="btn medio secundario" data-acao="novaApr" style="margin-top:8px">Nova APR (outra atividade ou outro local)</button>'
       : '<button type="button" class="btn" data-acao="concluirApr">Concluir a APR</button>') + '</div>';
   return h;
 }
@@ -1435,9 +1460,13 @@ function cartaoDaExecucao(d, pac, cab) {
 function bookDo(d) { d.book = d.book || { estruturas: {}, fotos: {}, extras: [], sel: '' }; d.book.extras = d.book.extras || []; d.book.trocadas = d.book.trocadas || []; return d.book; }
 /* 6d (15/10/2026): a foto trocada não se perde. O Dalton pediu o histórico das fotos ("quando houver mais de uma
    foto quero escolher qual vai para o book"): a anterior fica guardada e sobe junto, como histórico, sem entrar no
-   diário. Só as 3 últimas de cada item: o celular tem espaço contado, e quem tirou cinco vezes a mesma foto quer
-   uma das últimas. */
-var TROCADAS_POR_ITEM_DO_BOOK = 3;
+   diário. Até a 5g o celular guardava só as 3 últimas de cada item.
+   5g (20/10/2026, resposta 1.5: "guardar todas as fotos, e na hora do book a pessoa marca qual quer, ou todas"): todas
+   ficam. O espaço não é o limite que parecia: cada foto tem até ~200 KB, e o diário sai do celular depois de enviado. */
+function guardarTrocada(b, chave, antiga) {
+  if (antiga) b.trocadas.push({ id: antiga, chave: chave });
+  return b.trocadas.filter(function (t) { return t.chave === chave; }).length;
+}
 function anteriorDoDiario(d) { var f = folhaDoPacote(pacoteDe(d.dia), d.codigo); return (f && f.book) || { previstas: [], lugares: {}, geral: {} }; }
 /* 6f: a folha de manutenção emergencial tem o book de emergência (o defeito e a rede normalizada, sem a
    observação por estrutura); a regra vem do servidor, no pacote. */
@@ -1466,7 +1495,8 @@ function cartaoDoBook(d, pac, cab) {
   if (!b.sel) b.sel = (e.lugares[0] || {}).id || geral;
   var h = '<div class="cartao secao" id="f-book">' + cab(titulo + (e.previstas ? ' <span class="obrig">' + e.prontas + ' de ' + e.previstas + ' prontas</span>' : '')) +
     '<div class="ajuda" style="margin-top:-4px">' + (emergenciaDoDiario(d, R) ? 'No atendimento, fotografe em <b>Geral</b> a APR, a sinalização, o <b>defeito encontrado</b> e a <b>rede normalizada</b>; e a <b>estrutura</b> (+ estrutura) ou o <b>equipamento</b> (+ equipamento) em que trabalhou.' :
-      'Escolha a estrutura e fotografe cada item. Verde: pronta. Amarela: falta foto ou a observação. Branca: sem foto.' + (e.previstas ? ' Soma os outros dias.' : '')) + '</div><div class="lugares">';
+      'Escolha a estrutura e fotografe cada item. Verde: pronta. Amarela: falta foto ou a observação. Branca: sem foto.' + (e.previstas ? ' Soma os outros dias.' : '')) +
+    ' Tirar de novo não apaga a anterior: no fechamento, escolhe-se qual vai para o book, ou todas.</div><div class="lugares">';
   h += e.lugares.map(function (l) {
     var cls = l.pronta ? 'pronta' : (l.fotos || l.obs) ? 'parcial' : '';
     return '<button type="button" class="lugar ' + cls + (b.sel === l.id ? ' sel' : '') + '" data-lugar="' + esc(l.id) + '">' + esc(l.id) + (l.fora ? '*' : '') + '</button>';
@@ -1486,7 +1516,10 @@ function cartaoDoBook(d, pac, cab) {
     h += blocoDoDiario(d, 'bk|' + sel + '|' + it.id, esc(it.id) + (exigida ? ' <span class="fraco">(exigida)</span>' : ''), situ,
       '<div class="fotos">' + it.fotos.map(function (f) {
         var k = sel + '|' + it.id + '|' + f, id = b.fotos[k], antes = (ant[it.id] || []).indexOf(f) >= 0;
-        return '<label class="foto' + (id ? ' ok' : antes ? ' antes' : '') + '">' + (id ? '<img alt="" data-foto-id="' + esc(id) + '"><span>' + esc(f) + ' ✓</span>' :
+        /* 5g: quantas anteriores deste item estão guardadas (no fechamento, escolhe-se qual vai, ou todas). */
+        var guardadas = b.trocadas.filter(function (t) { return t.chave === k; }).length;
+        return '<label class="foto' + (id ? ' ok' : antes ? ' antes' : '') + '">' + (id ? '<img alt="" data-foto-id="' + esc(id) + '"><span>' + esc(f) + ' ✓' +
+          (guardadas ? ' · +' + guardadas + ' guardada' + (guardadas > 1 ? 's' : '') : '') + '</span>' :
           '<b>📷 ' + esc(f) + '</b><span>' + (antes ? 'já fotografada em outro dia · tocar para outra' : 'tocar para fotografar') + '</span>') +
           '<input type="file" accept="image/*" capture="environment" data-book="' + esc(k) + '"></label>';
       }).join('') + '</div>' + (it.min < it.fotos.length ? '<div class="ajuda">Mínimo: ' + it.min + ' de ' + it.fotos.length + '.</div>' : ''));
@@ -1548,17 +1581,13 @@ function trocarFotoDoBook(d, chave, arquivo) {
       [d.folha ? 'Obra ' + (d.form.obra || '—') : comNR(d.form.obra || '—'), lugar === 'Geral' ? 'GERAL' : lugar.replace(/^(FP|EQ)(\d)/, '$1 $2')].join('   ·   '),
       etq + ' · ' + item, [d.form.prefixo, 'Enc. ' + quem().nome].filter(Boolean).join('   ·   ')];
     return processarFoto(arquivo, LADOS_FOTO_PS, TETO_FOTO_PS, linhas).then(function (r) {
-      var id = novoId(), antiga = b.fotos[chave], sobra = null;
+      var id = novoId(), antiga = b.fotos[chave];
       return guardarFoto({ id: id, blob: r.blob, tipo: 'BOOK', diario: d.id, criadoEm: tirada.toISOString(),
         meta: { lugar: lugar, etiqueta: etq, item: item, lat: pos ? pos.lat : null, lon: pos ? pos.lon : null, precisao: pos ? pos.precisao : null, tiradaEm: tirada.toISOString() } }).then(function () {
         b.fotos[chave] = id;
         if (d.arquivos) delete d.arquivos['BOOK|' + chave];
-        if (antiga) {
-          b.trocadas.push({ id: antiga, chave: chave });
-          var doItem = b.trocadas.filter(function (t) { return t.chave === chave; });
-          if (doItem.length > TROCADAS_POR_ITEM_DO_BOOK) { sobra = doItem[0].id; b.trocadas = b.trocadas.filter(function (t) { return t.id !== sobra; }); }
-        }
-        return guardarDiario(d).then(function () { return apagarFoto(sobra); });
+        guardarTrocada(b, chave, antiga);
+        return guardarDiario(d);
       });
     });
   }).then(desenhar).catch(function (e) { aviso('Não consegui preparar a foto: ' + (e && e.message || e)); });
@@ -1956,6 +1985,7 @@ corpo.addEventListener('click', function (ev) {
     }
     if (acao === 'tirarFotoBook') return tirarFotoDoBook(d, a('data-chave'));
     if (acao === 'concluirApr') return concluirApr(d);
+    if (acao === 'novaApr') return novaApr(d);
     if (acao === 'addCod') { y.codigos.push({ cod: '', qtd: '', adc: '' }); return salvarAgora().then(desenhar); }
     if (acao === 'codCancelado') { var L = pacoteDe(d.dia).listas; y.codigos = [{ cod: L.cancelado, qtd: '1', adc: '' }]; return salvarAgora().then(desenhar); }
     if (acao === 'addPessoa') {
