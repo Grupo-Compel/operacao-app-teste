@@ -89,7 +89,9 @@ function regrasDe(pac) {
     /* As da 5b e as da 5c só existem no pacote do servidor da 5b e da 5c: o pacote antigo abre, e o app pede para baixar de novo. */
     var opc = ['validarDiaDoApp', 'horariosDoDiaApp', 'alvoDoDiarioApp', 'faixaDaEsperaCOD', 'validarBookDoApp', 'estadoDoBookApp', 'etiquetasDoLugarApp', 'casaEquipamentoApp', 'ehEmergenciaApp',
       /* 5e: a APR (e o catálogo dos modelos, que é dado e não função) */
-      'modelosDaAprApp', 'modeloSugeridoDaAprApp', 'estadoDaAprApp', 'validarAprDoApp'];
+      'modelosDaAprApp', 'modeloSugeridoDaAprApp', 'estadoDaAprApp', 'validarAprDoApp',
+      /* 5f: a folha cancelada no deslocamento não pede APR (7.6) */
+      'aprPedidaNaFolhaCancelada'];
     try { REGRAS[k] = new Function(pac.regras + '\nreturn { validarLancamentoPS: validarLancamentoPS, chaveDoLancamentoPS: chaveDoLancamentoPS,' +
       opc.map(function (n) { return ' ' + n + ': typeof ' + n + ' === "function" ? ' + n + ' : null'; }).join(',') +
       ', MODELOS_APR: typeof MODELOS_APR === "object" ? MODELOS_APR : null };')(); }
@@ -374,6 +376,7 @@ function tocar(tipo) {
     if (!r.blocos.length && tipo !== 'DESLOC') return erro('O dia começa com "Saí · deslocando", na saída da base.');
     if (!r.blocos.length && !km) return erro('O km do hodômetro na saída da base.');
     if (tipo === 'SERVICO' && !obra) return erro('De qual obra é o serviço.');
+    if (tipo === 'SERVICO') { var trava = travaDaApr(info, obra); if (trava) return erro(trava); }
     if (tipo === 'PARADA' && !motivo) return erro('O motivo da parada.');
     if (tipo === 'PARADA' && motivo === L.motivoOutro && !obs) return erro('Descreva o motivo da parada.');
     if (!r.blocos.length) r.kmSaida = km;
@@ -382,6 +385,25 @@ function tocar(tipo) {
   }
   E.aviso = null; E.toque = null; E.valToque = null;
   return guardarDia(r).then(desenhar);
+}
+/*
+ * 5f: A TRAVA DA APR (Dalton, 19/10/2026, resposta 7.2: '"Iniciei o serviço" sem a APR concluída trava, por um
+ * parâmetro da base'). Até a 5f o toque só avisava (o toque é a hora que aconteceu, e a conferência mostrava a APR feita
+ * depois). Com o APR_TRAVA_O_SERVICO da base em SIM, o "Iniciei o serviço" numa obra só entra com a APR de uma folha
+ * dela concluída, e sem impedimento: a APR com impedimento diz "não comece a atividade", e o toque seria o contrário
+ * dela. O servidor não confere o toque (ele chega depois, com o dia inteiro): a trava é do celular.
+ * → o texto do erro, ou '' quando pode tocar.
+ */
+function travaDaApr(info, alvo) {
+  var pac = pacoteDe(info.dia), L = (pac && pac.listas) || {}, R = regrasDe(pac);
+  if (!L.aprTrava || !L.aprPadrao || !R || !alvo) return '';
+  var ds = E.diarios.filter(function (d) { return d.dia === info.dia && d.estado === 'rascunho' && String(d.form.prefixo || '').toUpperCase() === String(info.prefixo || '').toUpperCase() && alvoDoDiario(d, R) === alvo; });
+  if (!ds.length) return 'Antes de "Iniciei o serviço", abra a folha desta obra (aba Hoje) e faça a APR. Nesta base, o serviço só começa com a APR concluída.';
+  var feitas = ds.filter(function (d) { return d.apr && d.apr.feitaEm; });
+  if (!feitas.length) return 'A APR de ' + nomeDaFolha(ds[0]) + ' ainda não foi concluída. Nesta base, o serviço só começa com a APR concluída (aba Diário).';
+  var e = R.estadoDaAprApp ? R.estadoDaAprApp(feitas[0].apr, L.aprPadrao, 'inicio') : null;
+  if (e && e.impedidos.length) return 'A APR de ' + nomeDaFolha(feitas[0]) + ' tem impedimento (' + e.impedidos.map(function (x) { return x.grupo; }).join('; ') + '): não comece a atividade. Fale com o supervisor.';
+  return '';
 }
 /*
  * O GPS NA SAÍDA E NA CHEGADA À BASE (6f; Dalton, 15/10/2026, 18:42: "pode fazer"). Só esses dois toques, uma
@@ -501,11 +523,13 @@ function formularioDoToque(t, info, r, L, R, ult) {
       (t === 'DESLOC' ? '<option value=""' + (v.obra === '' ? ' selected' : '') + '>Para a base, ou outro lugar</option>' : '') + opcoes(obras, v.obra !== undefined ? v.obra : obraPadrao) + '</select>';
     else if (t === 'SERVICO') h += '<div class="aviso atencao">Nenhuma folha aberta para esta equipe no dia. Abra a folha na aba Hoje: <b>Obra</b> ou <b>Emergência</b>.<button type="button" class="btn medio secundario" data-aba-ir="hoje">Ir para Hoje</button></div>';
   }
-  /* 5e: "Iniciei o serviço" sem a APR da folha concluída: aviso, e não bloqueio (o toque é a hora que aconteceu; a
-     conferência mostra a APR feita depois do início). */
-  if (t === 'SERVICO' && ((pacoteDe(info.dia) || {}).listas || {}).aprPadrao) {
+  /* 5e: "Iniciei o serviço" sem a APR da folha concluída: aviso. 5f: com a trava da base (APR_TRAVA_O_SERVICO), o aviso
+     diz que o toque não vai entrar; quem recusa é o travaDaApr, no Confirmar. */
+  var Lt = (pacoteDe(info.dia) || {}).listas || {};
+  if (t === 'SERVICO' && Lt.aprPadrao) {
     var semApr = E.diarios.filter(function (d) { return d.dia === info.dia && d.estado === 'rascunho' && String(d.form.prefixo || '').toUpperCase() === String(info.prefixo || '').toUpperCase() && !(d.apr && d.apr.feitaEm); });
-    if (semApr.length) h += '<div class="aviso atencao" id="avisoSemApr">A APR ainda não foi concluída em: ' + esc(semApr.map(nomeDaFolha).join(', ')) + '. A APR é feita <b>antes</b> de começar o serviço (aba Diário).</div>';
+    if (semApr.length) h += '<div class="aviso atencao" id="avisoSemApr">A APR ainda não foi concluída em: ' + esc(semApr.map(nomeDaFolha).join(', ')) + '. A APR é feita <b>antes</b> de começar o serviço (aba Diário).' +
+      (Lt.aprTrava ? ' Nesta base, o serviço só começa com a APR concluída.' : '') + '</div>';
   }
   if (t === 'PARADA') h += '<label for="tqMotivo">Motivo da parada</label><select id="tqMotivo">' + opcoes(L.paradas || [], v.motivo || '', 'Escolha') + '</select>' +
     '<input id="tqObs" placeholder="Descreva (obrigatório se for &quot;Outro&quot;)" autocomplete="off" style="margin-top:6px" value="' + esc(v.obs || '') + '">';
@@ -604,9 +628,10 @@ function conferirDiario(d) {
   /* O servidor ainda sem o book (instalado antes da 5c) não manda essas regras: o app não cobra o book que
      o servidor não conhece, senão o encarregado não conseguiria encerrar (14/10/2026: o app no GitHub vai
      na frente da instalação). */
-  if (R.validarBookDoApp) R.validarBookDoApp(retratoDoBook(d), p, anteriorDoDiario(d)).forEach(junta);
+  if (R.validarBookDoApp) R.validarBookDoApp(retratoDoBook(d), p, anteriorDoDiario(d), (pac.listas || {}).obsPorEstrutura).forEach(junta);
   /* 5e: a APR, com a regra do servidor (o servidor de antes da 5e não manda: o app não cobra). */
-  if (R.validarAprDoApp) R.validarAprDoApp(d.apr || null, p, (pac.listas || {}).aprPadrao || '').forEach(junta);
+  /* 5f: com o dia, a folha cancelada no deslocamento não pede APR (7.6). */
+  if (R.validarAprDoApp) R.validarAprDoApp(d.apr || null, p, (pac.listas || {}).aprPadrao || '', retratoDoDia(diaDaEquipe(d.dia, d.form.prefixo))).forEach(junta);
   val.erros.forEach(function (e) { if (CAMPOS_DO_DIA.indexOf(e.campo) < 0 || !out.erros.some(function (x) { return x.doDia; })) junta(e); });
   var x = d.form;
   var semMarcar = x.pessoas.filter(function (q) { return q.estado !== 'foi' && q.estado !== 'faltou'; });
@@ -1294,7 +1319,10 @@ function cartaoDaApr(d, pac, cab) {
   };
   var SNNA = [['S', 'Sim'], ['N', 'Não'], ['NA', 'N/A']], SN = [['S', 'Sim'], ['N', 'Não']];
   var pessoas = [quem().nome + ' (encarregado)'].concat(d.form.pessoas.filter(function (p) { return p.estado === 'foi'; }).map(function (p) { return p.nome || p.mat; }));
-  var h = '<div class="cartao secao" id="f-apr">' + cab('APR · antes de começar a atividade ' + (a.feitaEm ? '<span class="sit ok">✓ concluída às ' + esc(horaDeIso(a.feitaEm).slice(-5)) + '</span>' : '<span class="obrig">obrigatória</span>')) +
+  /* 5f (7.6): a folha cancelada antes de "Iniciei o serviço" não pede a APR; ela continua aberta para quem quiser fazer. */
+  var pedida = !R.aprPedidaNaFolhaCancelada || R.aprPedidaNaFolhaCancelada({ tipoDia: d.form.tipoDia, status: d.form.status, obra: d.form.obra, id: d.id }, retratoDoDia(diaDaEquipe(d.dia, d.form.prefixo)));
+  var h = '<div class="cartao secao" id="f-apr">' + cab('APR · antes de começar a atividade ' + (a.feitaEm ? '<span class="sit ok">✓ concluída às ' + esc(horaDeIso(a.feitaEm).slice(-5)) + '</span>' : pedida ? '<span class="obrig">obrigatória</span>' : '<span class="sit vazio">não pedida</span>')) +
+    (pedida ? '' : '<div class="aviso" id="aprNaoPedida">A folha foi cancelada antes de "Iniciei o serviço" (no deslocamento): a APR não é pedida para encerrar.</div>') +
     (modelos.length > 1 ? '<label for="i-aprModelo">Modelo</label><select id="i-aprModelo" data-apr-modelo="1">' + opcoes(modelos.map(function (m) { return [m, (R.MODELOS_APR[m] || {}).nome || m]; }), a.modelo) + '</select>'
       : '<div class="media">' + esc(M ? M.nome : '') + '</div>') +
     '<div class="ajuda">Uma APR por obra e local. O papel continua: fotografe a APR em papel no book (Geral). Supervisor da atividade: <b>' + esc(quem().nome) + '</b>.</div>' +
@@ -1415,7 +1443,8 @@ function anteriorDoDiario(d) { var f = folhaDoPacote(pacoteDe(d.dia), d.codigo);
    observação por estrutura); a regra vem do servidor, no pacote. */
 function emergenciaDoDiario(d, R) { return !!(R && R.ehEmergenciaApp && R.ehEmergenciaApp(d.form)); }
 function estadoDoBook(d, R) {
-  var e = R.estadoDoBookApp(retratoDoBook(d), anteriorDoDiario(d), emergenciaDoDiario(d, R)), b = bookDo(d), tem = {};
+  /* 5f: a observação por estrutura é um parâmetro da base (1.2), que vem no pacote. */
+  var e = R.estadoDoBookApp(retratoDoBook(d), anteriorDoDiario(d), emergenciaDoDiario(d, R), ((pacoteDe(d.dia) || {}).listas || {}).obsPorEstrutura), b = bookDo(d), tem = {};
   e.lugares.forEach(function (l) { tem[l.id] = 1; });
   /* A estrutura acrescentada hoje e ainda sem foto também aparece. */
   b.extras.forEach(function (id) { if (!tem[id]) e.lugares.push({ id: id, prevista: false, eq: /^EQ/.test(id), hoje: false, fotos: 0, fotosHoje: 0, obs: '', itens: {}, fora: !/^EQ/.test(id) && e.previstas > 0, faltas: ['sem foto'], pronta: false }); });
@@ -1436,7 +1465,7 @@ function cartaoDoBook(d, pac, cab) {
   var e = estadoDoBook(d, R), L = pac.listas || {}, geral = L.geral || 'Geral';
   if (!b.sel) b.sel = (e.lugares[0] || {}).id || geral;
   var h = '<div class="cartao secao" id="f-book">' + cab(titulo + (e.previstas ? ' <span class="obrig">' + e.prontas + ' de ' + e.previstas + ' prontas</span>' : '')) +
-    '<div class="ajuda" style="margin-top:-4px">' + (emergenciaDoDiario(d, R) ? 'No atendimento, fotografe em <b>Geral</b> a APR, a sinalização, o <b>defeito encontrado</b> e a <b>rede normalizada</b>; a estrutura ou o equipamento, se trabalhou neles.' :
+    '<div class="ajuda" style="margin-top:-4px">' + (emergenciaDoDiario(d, R) ? 'No atendimento, fotografe em <b>Geral</b> a APR, a sinalização, o <b>defeito encontrado</b> e a <b>rede normalizada</b>; e a <b>estrutura</b> (+ estrutura) ou o <b>equipamento</b> (+ equipamento) em que trabalhou.' :
       'Escolha a estrutura e fotografe cada item. Verde: pronta. Amarela: falta foto ou a observação. Branca: sem foto.' + (e.previstas ? ' Soma os outros dias.' : '')) + '</div><div class="lugares">';
   h += e.lugares.map(function (l) {
     var cls = l.pronta ? 'pronta' : (l.fotos || l.obs) ? 'parcial' : '';
@@ -1468,7 +1497,8 @@ function cartaoDoBook(d, pac, cab) {
   });
   if (sel !== geral) {
     var obsAnt = ((anterior.lugares || {})[sel] || {}).obs || '';
-    h += '<label for="bkObs">Observação da estrutura ' + esc(sel) + '</label><textarea id="bkObs" data-bkobs="' + esc(sel) + '" maxlength="600" placeholder="Ex.: POSTE EXISTENTE DT 11/300 · + 01 S2 · − 03 S1 (+ instalado, − retirado, * reaplicado)">' + esc((b.estruturas[sel] || {}).obs || '') + '</textarea>' +
+    var obsCobrada = ((pacoteDe(d.dia) || {}).listas || {}).obsPorEstrutura !== false && !emerg;
+    h += '<label for="bkObs">Observação da estrutura ' + esc(sel) + (obsCobrada ? '' : ' <span class="fraco">(se tiver)</span>') + '</label><textarea id="bkObs" data-bkobs="' + esc(sel) + '" maxlength="600" placeholder="Ex.: POSTE EXISTENTE DT 11/300 · + 01 S2 · − 03 S1 (+ instalado, − retirado, * reaplicado)">' + esc((b.estruturas[sel] || {}).obs || '') + '</textarea>' +
       (obsAnt ? '<div class="ajuda">De outro dia: ' + esc(obsAnt) + '</div>' : '');
   }
   return h + '<div id="estadoFotoBook" class="ajuda"></div></div></div>';
