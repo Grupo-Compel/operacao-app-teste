@@ -665,8 +665,36 @@ function irPara(aba, campo) {
 }
 
 // ---- Ligar
+/*
+ * O LINK DE OUTRO SERVIDOR É RECUSADO (5e.2, 20/10/2026; carta nº 6 do App à
+ * Operação). O endereço do servidor chega no próprio link do WhatsApp (o "s="),
+ * e o app só conferia a forma dele: qualquer projeto Apps Script passa. Desde a
+ * 5d a senha da pessoa vai para o servidor ligado, então um link falso que
+ * convencesse alguém a tocar em "Ligar" levaria as senhas e os diários daquele
+ * celular, inclusive os da fila que ainda não subiram.
+ *
+ * Por isso, o celular que já tem servidor só aceita o MESMO servidor. O endereço
+ * da Operação não muda (republicar é editar a implantação que existe, e nunca
+ * "Nova implantação"); se um dia mudar, é versão nova do app, como o Núcleo
+ * combinou para o login (carta nº 7 dele ao App). Não há botão para aceitar
+ * "mesmo assim": quem está no campo não tem como saber se o endereço é bom, e
+ * a pergunta só ensinaria a tocar em "sim".
+ *
+ * O que ainda fica aberto: o celular NOVO, que nunca foi ligado, não tem com o
+ * que comparar. Fechar esse caso pede o resumo do endereço no código (o
+ * endereço mesmo não vai ao repositório público), e espera a decisão do Dalton
+ * sobre onde mora o endereço do login, para os dois apps fazerem igual.
+ */
+function servidorDiferente(url) { return !!(E.cfg && E.cfg.url && url && url !== E.cfg.url); }
+var TEXTO_OUTRO_SERVIDOR = 'Este link é de outro servidor, diferente do que este celular usa. Não ligue por ele: avise o supervisor e mostre este aviso. Se alguém mandou este link de fora da Compel, não toque em nada.';
+
 function telaLigar() {
   var l = E.ligar || { codigo: '', url: E.cfg ? E.cfg.url : '' };
+  /* O link sem "s=" num celular já ligado usa o servidor guardado: o campo do endereço nem aparece para ser digitado. */
+  if (!l.url && E.cfg && E.cfg.url) l.url = E.cfg.url;
+  if (servidorDiferente(l.url)) return '<div class="cartao" id="outroServidor"><div class="etiqueta">Link recusado</div><div class="aviso erro">' + esc(TEXTO_OUTRO_SERVIDOR) + '</div>' +
+    '<button type="button" class="btn" data-acao="cancelarLigar">Voltar ao app</button></div>' +
+    '<footer>Compel · Campo · versão ' + esc(VERSAO_APP) + '</footer>';
   var h = '<div class="cartao"><div class="etiqueta">Ligar este celular</div>' +
     '<p>O supervisor gera um código de 6 números na tela <b>Aparelhos do campo</b> e manda o link pelo WhatsApp. Abra o link <b>no Chrome</b> deste celular e toque em Ligar. Só uma vez: depois, o app abre direto, com ou sem sinal.</p>' +
     (E.cfg && !E.cfg.desligado ? '<div class="aviso atencao">Este celular já está ligado ' + (E.cfg.login ? 'na equipe ' + esc(E.cfg.prefixo) : 'para ' + esc(E.cfg.nome)) + '. Ligar com outro código troca o celular de dono.</div>' : '') +
@@ -692,6 +720,8 @@ function ligar() {
   var erro = function (t) { $('ligErro').innerHTML = '<div class="aviso erro">' + esc(t) + '</div>'; };
   if (!/^\d{6}$/.test(codigo)) return erro('O código tem 6 números.');
   if (!ENDERECO_VALIDO.test(url)) return erro('O endereço do servidor não está certo: tem de terminar em /exec. Peça o link de novo ao supervisor.');
+  /* A segunda trava, no envio: a tela já recusa, mas o endereço digitado e o "religar" também passam por aqui. */
+  if (servidorDiferente(url)) return erro(TEXTO_OUTRO_SERVIDOR);
   $('ligErro').innerHTML = '<div class="aviso">Ligando…</div>';
   postar(url, { acao: 'ligar', codigo: codigo, aparelho: resumoDoAparelho() }, 45000).then(function (r) {
     if (!r.ok) return erro(r.erro || 'O servidor recusou o código.');

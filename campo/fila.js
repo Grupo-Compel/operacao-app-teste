@@ -8,7 +8,7 @@
    NADA DE DADO DA COMPEL NESTE ARQUIVO, nem endereço do servidor: tudo isso
    chega no celular (o link do supervisor e o pacote do dia) e fica só nele. */
 
-var VERSAO_APP = '5e.1 · 17/10/2026';
+var VERSAO_APP = '5e.2 · 20/10/2026';
 var BANCO = 'operacao-campo';
 
 function abrirBanco() {
