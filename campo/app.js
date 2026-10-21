@@ -705,10 +705,11 @@ function irPara(aba, campo) {
  * "mesmo assim": quem está no campo não tem como saber se o endereço é bom, e
  * a pergunta só ensinaria a tocar em "sim".
  *
- * O que ainda fica aberto: o celular NOVO, que nunca foi ligado, não tem com o
- * que comparar. Fechar esse caso pede o resumo do endereço no código (o
- * endereço mesmo não vai ao repositório público), e espera a decisão do Dalton
- * sobre onde mora o endereço do login, para os dois apps fazerem igual.
+ * O CELULAR NOVO, QUE NUNCA FOI LIGADO (5e.3, 21/10/2026): ele não tinha com o
+ * que comparar. Desde a 5e.3 todo envio passa pelo resumo do endereço (o
+ * servidor.js, conferido no postar do fila.js): o link de outro servidor é
+ * recusado também no primeiro "Ligar", e nenhum envio sai para outro lugar,
+ * nem de um celular ligado por um link falso antes desta versão.
  */
 function servidorDiferente(url) { return !!(E.cfg && E.cfg.url && url && url !== E.cfg.url); }
 var TEXTO_OUTRO_SERVIDOR = 'Este link é de outro servidor, diferente do que este celular usa. Não ligue por ele: avise o supervisor e mostre este aviso. Se alguém mandou este link de fora da Compel, não toque em nada.';
@@ -762,7 +763,7 @@ function ligar() {
       desenhar();
       return baixarPacote(E.dia).then(function () { return enviar('celular ligado'); });
     });
-  }, function (e) { erro((e && e.msg) || 'Não consegui falar com o servidor.'); });
+  }, function (e) { erro(e && e.servidorRecusado ? TEXTO_OUTRO_SERVIDOR : (e && e.msg) || 'Não consegui falar com o servidor.'); });
 }
 
 // ---- Entrar (5d): a pessoa no celular da equipe

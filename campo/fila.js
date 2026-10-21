@@ -8,7 +8,7 @@
    NADA DE DADO DA COMPEL NESTE ARQUIVO, nem endereço do servidor: tudo isso
    chega no celular (o link do supervisor e o pacote do dia) e fica só nele. */
 
-var VERSAO_APP = '5g · 20/10/2026';
+var VERSAO_APP = '5e.3 · 21/10/2026';
 var BANCO = 'operacao-campo';
 
 function abrirBanco() {
@@ -93,6 +93,31 @@ function retratoDoBook(d) {
    (CORS) que ele não responde. Resposta que não é JSON é a tela de login do
    Google (implantação fora de "Qualquer pessoa"): não conta como resposta. */
 function postar(url, corpo, ms) {
+  /* 5e.3: nenhum envio sai para um servidor que não é o da Operação (servidor.js). Conferido aqui, e não em cada tela,
+     porque é por aqui que passa tudo: o ligar, a senha, o pacote do dia e a fila do segundo plano. */
+  return servidorAceito(url).then(function (aceito) {
+    if (!aceito) throw { servidorRecusado: true, msg: TEXTO_SERVIDOR_RECUSADO };
+    return postarAoServidor(url, corpo, ms);
+  });
+}
+
+var TEXTO_SERVIDOR_RECUSADO = 'O endereço do servidor deste celular não é o da Operação. Nada foi enviado, e nada foi apagado: avise o supervisor.';
+
+/* O resumo SHA-256 do endereço, em hexadecimal (o mesmo que o sha256sum dá). */
+function resumoDoEndereco(url) {
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(url || ''))).then(function (b) {
+    return Array.prototype.map.call(new Uint8Array(b), function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+  });
+}
+
+/* Sem o servidor.js, ou com ele estragado, nenhum servidor é aceito: falha fechada. Um app que não envia aparece no
+   primeiro dia; um app que envia para qualquer lugar não aparece nunca. */
+function servidorAceito(url) {
+  if (typeof RESUMO_DO_SERVIDOR !== 'string' || !/^[0-9a-f]{64}$/.test(RESUMO_DO_SERVIDOR)) return Promise.resolve(false);
+  return resumoDoEndereco(url).then(function (h) { return h === RESUMO_DO_SERVIDOR; }, function () { return false; });
+}
+
+function postarAoServidor(url, corpo, ms) {
   var controle = typeof AbortController !== 'undefined' ? new AbortController() : null;
   var relogio = controle ? setTimeout(function () { controle.abort(); }, ms || 90000) : null;
   corpo.app = 'campo'; corpo.versao = VERSAO_APP;
@@ -140,7 +165,7 @@ function enviarFila(enviadoPor) {
 function enviarDentroDaTrava(enviadoPor) {
   if (enviandoAgora) return Promise.resolve({ ocupado: true });
   enviandoAgora = true;
-  var resumo = { enviados: 0, recusados: 0, pendentes: 0, erro: '', semRede: false, servidorFora: false, desligado: false };
+  var resumo = { enviados: 0, recusados: 0, pendentes: 0, erro: '', semRede: false, servidorFora: false, desligado: false, servidorRecusado: false };
   var fim = function (x) { enviandoAgora = false; return x; };
   return lerConfig('servidor').then(function (cfg) {
     if (!cfg || !cfg.url || !cfg.token) { resumo.erro = 'Este celular ainda não está ligado.'; return resumo; }
@@ -185,6 +210,7 @@ function enviarDentroDaTrava(enviadoPor) {
           if (e && e.semSessao) { resumo.erro = d.ultimoErro; return guardarDiario(d).then(proximo); }
           resumo.erro = d.ultimoErro;
           if (e && e.desligado) { resumo.desligado = true; }
+          else if (e && e.servidorRecusado) { resumo.servidorRecusado = true; }
           else if (e && e.rede) { if (e.comSinal) resumo.servidorFora = true; else resumo.semRede = true; }
           parar = true;
           return guardarDiario(d);

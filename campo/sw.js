@@ -7,11 +7,12 @@
 
    O ENVIO NUNCA PASSA PELO GUARDADO: só GET do próprio site é servido daqui. Um
    POST respondido do cache seria um "enviado" que não chegou. */
-importScripts('fila.js');
+/* 5e.3: o resumo do servidor antes da fila: o envio em segundo plano também confere para onde vai. */
+importScripts('servidor.js', 'fila.js');
 
-var VERSAO_CACHE = 'operacao-campo-5g-1';
+var VERSAO_CACHE = 'operacao-campo-5e3-1';
 /* 2f: o leitor de PDF (pdfjs/) vem guardado, para o projeto abrir na obra sem sinal. */
-var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './manifest.webmanifest', './icone-192.png', './icone-512.png',
+var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './servidor.js', './manifest.webmanifest', './icone-192.png', './icone-512.png',
   './pdfjs/pdf.min.js', './pdfjs/pdf.worker.min.js'];
 
 self.addEventListener('install', function (e) {
