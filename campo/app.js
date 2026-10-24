@@ -657,6 +657,9 @@ function conferirDiario(d) {
     var imp = q.estado === 'foi' ? impedidoNoPacote(pac, q.mat) : null;
     if (imp) out.avisos.push((q.nome || q.mat) + ' está impedido de ir a campo neste dia (' + imp.motivo + '). Se foi mesmo, encerre: o DP confere.');
   });
+  /* 7u: a placa retida pela Segurança é aviso, e não trava: o dia já aconteceu, e quem libera é o superior. */
+  var placaRet = ((pac && pac.placas) || []).filter(function (q) { return q.retida && q.placa === String(x.placa || '').toUpperCase().replace(/[\s-]+/g, ''); })[0];
+  if (placaRet) out.avisos.push('A placa ' + placaRet.placa + ' está ' + placaRet.retida + '. Se a equipe saiu com ela, avise a supervisão.');
   var impEnc = impedidoNoPacote(pac, x.matEnc);
   if (impEnc) out.avisos.push('Você aparece como impedido de ir a campo neste dia (' + impEnc.motivo + '). Se trabalhou, encerre e avise o supervisor.');
   return out;
@@ -1147,8 +1150,10 @@ function campoDaPlaca(x, pac) {
   if (!placas.length) return digitar;
   var v = String(x.placa || '').toUpperCase().replace(/[\s-]+/g, ''), fora = x.placaOutra || (v && !placas.some(function (p) { return p.placa === v; }));
   return '<div id="f-placaSel"><label for="i-placaSel">Placa da viatura</label><select id="i-placaSel" data-placa="1"><option value="">Escolha a placa</option>' +
-    placas.map(function (p) { return '<option value="' + esc(p.placa) + '"' + (!fora && p.placa === v ? ' selected' : '') + '>' + esc(p.placa) + (p.tipo ? ' · ' + esc(p.tipo) : '') + (p.parado ? ' (parado)' : '') + '</option>'; }).join('') +
-    '<option value="' + OUTRA_PLACA + '"' + (fora ? ' selected' : '') + '>Outra placa (de outra base)</option></select></div>' +
+    placas.map(function (p) { return '<option value="' + esc(p.placa) + '"' + (!fora && p.placa === v ? ' selected' : '') + '>' + esc(p.placa) + (p.tipo ? ' · ' + esc(p.tipo) : '') + (p.parado ? ' (parado)' : '') + (p.retida ? ' (RETIDO)' : '') + '</option>'; }).join('') +
+    '<option value="' + OUTRA_PLACA + '"' + (fora ? ' selected' : '') + '>Outra placa (de outra base)</option></select>' +
+    /* 7u (24/10/2026): o veículo retido pela Segurança (item crítico do checklist) só sai depois que um superior libera. */
+    (!fora && placas.some(function (p) { return p.placa === v && p.retida; }) ? '<div class="erro-campo" id="avisoRetida">Esta placa está ' + esc(placas.filter(function (p) { return p.placa === v; })[0].retida) + '. Só saia com o veículo depois que um superior liberar no módulo Segurança.</div>' : '') + '</div>' +
     (fora ? campoTexto('placa', 'Qual placa', x, ' maxlength="8" style="text-transform:uppercase" placeholder="ABC1D23"') : '<div id="f-placa"></div>');
 }
 function campoTexto(campo, rotulo, x, extra, dica) {

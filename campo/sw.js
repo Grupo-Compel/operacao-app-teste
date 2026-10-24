@@ -10,7 +10,7 @@
 /* 5e.3: o resumo do servidor antes da fila: o envio em segundo plano também confere para onde vai. */
 importScripts('servidor.js', 'fila.js');
 
-var VERSAO_CACHE = 'operacao-campo-7t4-1';
+var VERSAO_CACHE = 'operacao-campo-7u-1';
 /* 2f: o leitor de PDF (pdfjs/) vem guardado, para o projeto abrir na obra sem sinal. */
 var ARQUIVOS = ['./', './index.html', './app.js', './fila.js', './servidor.js', './manifest.webmanifest', './icone-192.png', './icone-512.png',
   './pdfjs/pdf.min.js', './pdfjs/pdf.worker.min.js'];
