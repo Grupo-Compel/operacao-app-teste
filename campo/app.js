@@ -570,9 +570,12 @@ function novoDiario(pac, f) {
   };
   var irmao = E.diarios.filter(function (d) { return d.dia === pac.dia && d.form && d.form.prefixo === prefixo; })
     .sort(function (a, b) { return a.mudadoEm < b.mudadoEm ? 1 : -1; })[0];
+  var ddsLista = null;
   if (irmao) {
     var y = irmao.form;
     ['placa', 'dds', 'ddsHora', 'ddsQuem'].forEach(function (k) { if (y[k]) x[k] = y[k]; });
+    /* 7t.4: a lista do DDS é do dia da equipe, como o DDS: a segunda folha usa a mesma foto (como o rosto). */
+    if (y.dds === 'EM_CAMPO' && irmao.ddsLista) ddsLista = irmao.ddsLista;
     var porMat = {};
     y.pessoas.forEach(function (p) { porMat[semZeros(p.mat)] = p; });
     x.pessoas.forEach(function (p) { var q = porMat[semZeros(p.mat)]; if (q) { p.estado = q.estado; delete porMat[semZeros(p.mat)]; } });
@@ -581,7 +584,7 @@ function novoDiario(pac, f) {
   return {
     id: novoId(), dia: pac.dia, codigo: f ? f.codigo : '', extra: !f, estado: 'rascunho', criadoEm: new Date().toISOString(),
     folha: f ? { codigo: f.codigo, p: f.p, obra: f.obra, municipio: f.municipio, verso: f.verso, hi: f.hi, hf: f.hf, servico: f.servico, desligar: f.desligar, om: f.om } : null,
-    form: x, fotos: { FRENTE: null, VERSO: null }, rosto: null, arquivos: {}, tentativas: 0
+    form: x, fotos: { FRENTE: null, VERSO: null }, rosto: null, ddsLista: ddsLista, arquivos: {}, tentativas: 0
   };
 }
 
@@ -637,6 +640,9 @@ function conferirDiario(d) {
   var semMarcar = x.pessoas.filter(function (q) { return q.estado !== 'foi' && q.estado !== 'faltou'; });
   if (semMarcar.length) junta({ campo: 'pessoas', msg: 'Componentes: marque Foi ou Faltou em ' + semMarcar.map(function (q) { return q.nome || q.mat; }).join(', ') + '.' });
   if (!d.fotos || !d.fotos.FRENTE || !d.fotos.VERSO) junta({ campo: 'fotos', msg: 'Fotos do PS: a frente e o verso do papel.' });
+  /* 7t.4: o DDS em campo pede a foto da lista de presença, que a base revisa na conferência. Só quando o servidor
+     a conhece (o pacote diz): o app no GitHub vai na frente da instalação, e não pode cobrar o que o servidor recusa. */
+  if (x.dds === 'EM_CAMPO' && pedeFotoDaListaDDS(pac) && !d.ddsLista) junta({ campo: 'ddsLista', msg: 'DDS em campo: a foto da lista de presença, com quem participou.' });
   if (val.v && val.v.prefixo) {
     var chave = R.chaveDoLancamentoPS(val.v.dia, val.v.prefixo, val.v.obra);
     var ja = (pac.lancados || []).filter(function (l) { return l.chave === chave && l.situacao !== 'DESFEITO'; })[0];
@@ -1226,7 +1232,11 @@ function telaDiario() {
 
   /* 4. DDS */
   h += '<div class="cartao secao" id="f-dds">' + cab('DDS de hoje') + seg('dds', [['NA_BASE', 'Na base'], ['EM_CAMPO', 'Em campo'], ['NAO_HOUVE', 'Não houve']], x.dds) +
-    (x.dds === 'EM_CAMPO' ? campoHora('ddsHora', 'Hora do DDS', x) + campoTexto('ddsQuem', 'Quem conduziu', x) : '') + '</div>';
+    (x.dds === 'EM_CAMPO' ? campoHora('ddsHora', 'Hora do DDS', x) + campoTexto('ddsQuem', 'Quem conduziu', x) : '') +
+    /* 7t.4 (24/10/2026): a foto da lista de presença do DDS em campo (Dalton, 24/10, 13:03). */
+    (x.dds === 'EM_CAMPO' && pedeFotoDaListaDDS(pacoteDe(d.dia)) ? '<div id="f-ddsLista" class="fotos" style="margin-top:10px"><label class="foto' + (d.ddsLista ? ' ok' : '') + '">' +
+      (d.ddsLista ? '<img alt="" data-foto-id="' + esc(d.ddsLista) + '"><span>Lista do DDS ✓ · tocar para trocar</span>' : '<b>📷 Lista de presença do DDS</b><span>com quem participou · obrigatória</span>') +
+      '<input type="file" accept="image/*" capture="environment" data-foto-dds="1"></label></div><div id="estadoFotoDds" class="ajuda">A base confere na foto quem participou.</div>' : '') + '</div>';
 
   /* 5. a obra */
   if (!plantao) {
@@ -1775,7 +1785,9 @@ function apagarDiarioDoCelular(id) {
     if (!d || !confirm('Tirar este diário do celular? As fotos dele também saem.')) return;
     /* A foto do rosto é uma só para as folhas do dia: fica se outra folha a usa. */
     var emUso = E.diarios.some(function (o) { return o.id !== d.id && o.rosto && o.rosto === d.rosto; });
-    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), emUso ? null : apagarFoto(d.rosto)].concat(idsDoBook(d).map(apagarFoto))).then(function () { return apagarDiario(d.id); })
+    /* 7t.4: a lista do DDS também é uma só para as folhas do dia. */
+    var ddsEmUso = E.diarios.some(function (o) { return o.id !== d.id && o.ddsLista && o.ddsLista === d.ddsLista; });
+    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), emUso ? null : apagarFoto(d.rosto), ddsEmUso ? null : apagarFoto(d.ddsLista)].concat(idsDoBook(d).map(apagarFoto))).then(function () { return apagarDiario(d.id); })
       .then(function () { if (E.aberto && E.aberto.id === d.id) { E.aberto = null; return gravarConfig('aberto', null); } }).then(function () { return irPara('encerrar'); });
   });
 }
@@ -1877,6 +1889,7 @@ corpo.addEventListener('change', function (ev) {
     return;
   }
   if (t.getAttribute('data-foto') && d && d.estado === 'rascunho') { trocarFotoDoPS(d, t.getAttribute('data-foto'), t.files && t.files[0]); return; }
+  if (t.getAttribute('data-foto-dds') && d && d.estado === 'rascunho') { trocarFotoDaListaDDS(d, t.files && t.files[0]); return; }
   if (t.getAttribute('data-book') && d && d.estado === 'rascunho') { trocarFotoDoBook(d, t.getAttribute('data-book'), t.files && t.files[0]); return; }
   if (t.hasAttribute('data-apr-modelo') && d && d.estado === 'rascunho') {
     /* Trocar o modelo começa a APR de novo: as respostas de um modelo não valem no outro. */
@@ -1912,6 +1925,28 @@ function trocarFotoDoPS(d, lado, arquivo) {
       return guardarDiario(d).then(function () { return apagarFoto(antiga); });
     });
   }).then(desenhar).catch(function (e) { $('estadoFoto').textContent = 'Não consegui preparar a foto: ' + (e && e.message || e); });
+}
+
+/* 7t.4: o servidor conhece a foto da lista do DDS (o pacote do dia diz). */
+function pedeFotoDaListaDDS(pac) { return !!(pac && pac.listas && pac.listas.fotoDaListaDDS); }
+
+/* 7t.4: a foto da lista de presença do DDS em campo. É do dia da equipe: as outras folhas do dia que ainda são rascunho,
+   com o DDS em campo, passam a usar a mesma foto. A antiga só sai do celular quando nenhuma folha a usa mais. */
+function trocarFotoDaListaDDS(d, arquivo) {
+  if (!arquivo) return;
+  $('estadoFotoDds').textContent = 'preparando a foto…';
+  var x = d.form, linhas = [new Date().toLocaleString('pt-BR'), 'DDS · LISTA DE PRESENÇA · ' + brDe(d.dia), [x.prefixo, quem().nome].filter(Boolean).join('   ·   ')];
+  processarFoto(arquivo, LADOS_FOTO_PS, TETO_FOTO_PS, linhas).then(function (r) {
+    var id = novoId(), antiga = d.ddsLista;
+    return guardarFoto({ id: id, blob: r.blob, tipo: 'DDS_LISTA', diario: d.id, criadoEm: new Date().toISOString() }).then(function () {
+      var irmaos = E.diarios.filter(function (o) { return o.id !== d.id && o.dia === d.dia && o.estado === 'rascunho' && o.form && o.form.prefixo === x.prefixo && o.form.dds === 'EM_CAMPO' && o.ddsLista === antiga; });
+      var muda = function (o) { o.ddsLista = id; if (o.arquivos) delete o.arquivos.DDS_LISTA; return guardarDiario(o); };
+      return Promise.all([muda(d)].concat(irmaos.map(muda))).then(function () {
+        var emUso = antiga && E.diarios.some(function (o) { return o.ddsLista === antiga && o.id !== d.id && irmaos.indexOf(o) < 0; });
+        return emUso ? null : apagarFoto(antiga);
+      });
+    });
+  }).then(desenhar).catch(function (e) { $('estadoFotoDds').textContent = 'Não consegui preparar a foto: ' + (e && e.message || e); });
 }
 
 /* Ir até uma pendência: abre o diário dela (se for de uma folha) e rola até o campo. */
@@ -2032,9 +2067,9 @@ function limparVelhos() {
   var limite = new Date(Date.now() - DIAS_GUARDANDO_ENVIADOS * 86400000).toISOString();
   var velhos = E.diarios.filter(function (d) { return (d.estado === 'enviado' || d.estado === 'jaLancado') && (d.enviadoEm || d.mudadoEm) < limite; });
   var ficam = E.diarios.filter(function (d) { return velhos.indexOf(d) < 0; });
-  var emUso = function (id) { return ficam.some(function (d) { return d.rosto === id; }); };
+  var emUso = function (id) { return ficam.some(function (d) { return d.rosto === id || (id && d.ddsLista === id); }); };
   return Promise.all(velhos.map(function (d) {
-    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), emUso(d.rosto) ? null : apagarFoto(d.rosto)].concat(idsDoBook(d).map(apagarFoto))).then(function () { return apagarDiario(d.id); });
+    return Promise.all([apagarFoto(d.fotos && d.fotos.FRENTE), apagarFoto(d.fotos && d.fotos.VERSO), emUso(d.rosto) ? null : apagarFoto(d.rosto), emUso(d.ddsLista) ? null : apagarFoto(d.ddsLista)].concat(idsDoBook(d).map(apagarFoto))).then(function () { return apagarDiario(d.id); });
   })).then(function () {
     var diaLimite = isoMaisDias(hojeLocal(), -3);
     return noBanco('config', 'readonly', function (s) { return s.getAllKeys(); }).then(function (chaves) {

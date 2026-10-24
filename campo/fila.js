@@ -8,7 +8,7 @@
    NADA DE DADO DA COMPEL NESTE ARQUIVO, nem endereço do servidor: tudo isso
    chega no celular (o link do supervisor e o pacote do dia) e fica só nele. */
 
-var VERSAO_APP = '5e.3 · 21/10/2026';
+var VERSAO_APP = '7t.4 · 24/10/2026';
 var BANCO = 'operacao-campo';
 
 function abrirBanco() {
@@ -191,7 +191,10 @@ function enviarDentroDaTrava(enviadoPor) {
                                    /* 5e: a APR da folha (só na produção; a do plantão e do homem-hora não vai). */
                                    apr: d.apr || null,
                                    /* 5g: as APRs anteriores da mesma folha (a "nova APR"), da primeira à penúltima. */
-                                   aprsAnteriores: d.aprs || [] });
+                                   aprsAnteriores: d.aprs || [],
+                                   /* 7t.4: a foto da lista do DDS em campo, e o aviso de que este app a conhece (o app
+                                      de antes não manda o campo, e o servidor não cobra dele o que ele não sabia pedir). */
+                                   ddsLista: d.form.dds === 'EM_CAMPO' ? (d.arquivos.DDS_LISTA || '') : '', fotoDdsNoApp: true });
         }).then(function (r) {
           d.resposta = r; d.ultimoErro = '';
           if (r.ok) { d.estado = 'enviado'; d.enviadoEm = new Date().toISOString(); d.enviadoPor = enviadoPor; resumo.enviados++; }
@@ -241,6 +244,8 @@ function enviarFotosDoDiario(cfg, d, sessao) {
     tipos.push(['TROCADA|' + t.id, t.id, { lugar: c[0], etiqueta: c[1], item: c.slice(2).join('|'), historico: true }]);
   });
   tipos.push(['ROSTO', d.rosto]);
+  /* 7t.4: a lista de presença do DDS em campo. */
+  if (d.form.dds === 'EM_CAMPO' && d.ddsLista) tipos.push(['DDS_LISTA', d.ddsLista]);
   var k = 0;
   function proxima() {
     if (k >= tipos.length) return Promise.resolve();
